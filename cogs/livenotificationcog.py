@@ -76,7 +76,7 @@ class LiveNotificationCog(commands.Cog):
                             url=watch_url
                             )
                             embed.set_author(name=self.bot.user,
-                                            url='https://repo.exapmle.com/bot',
+                                            url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
                                             icon_url=self.bot.user.avatar_url
                                             )
                             embed.add_field(name='開始日時',value=result_dict.get('started_at'))
@@ -96,14 +96,14 @@ class LiveNotificationCog(commands.Cog):
                                     notification_user = await self.bot.fetch_user(discord_user_id)
                                     text = notification_user or ''
                                 channel = await notification_user.create_dm()
-                                await channel.send(content=f'{mention} {message}', embed=embed)
+                                await channel.send(f'{mention} {message}', embed=embed)
                             else:
                                 channel = discord.utils.get(self.bot.get_all_channels(),
                                                             guild__id=notification['notification_guild'],
                                                             id=notification['notification_channel'])
                                 if channel is not None:
                                     try:
-                                        await channel.send(content=f'{mention} {message}', embed=embed)
+                                        await channel.send(f'{mention} {message}', embed=embed)
                                     except discord.errors.Forbidden:
                                         msg = f'''＊＊＊{notification['notification_guild']}のチャンネルへの投稿に失敗しました！＊＊＊'''
                                         LOG.error(msg)
@@ -122,7 +122,7 @@ class LiveNotificationCog(commands.Cog):
         description='ライブ通知(YouTube,ニコ生)を作成する',
         options=[
             manage_commands.create_option(name='live_channel_id',
-                                        description='YouTubeかニコ生のチャンネルID',
+                                        description='YouTubeかニコ生のチャンネルID(＊非公開のニコ生コミュニティは登録失敗します)',
                                         option_type=3,
                                         required=True),
             manage_commands.create_option(name='notification_chanel',
@@ -130,11 +130,11 @@ class LiveNotificationCog(commands.Cog):
                                         option_type=3,
                                         required=False),
             manage_commands.create_option(name='mention',
-                                        description='通知する際のメンション(@me, @here, @everyone)',
+                                        description='通知する際のメンション(@XXXX, @here, @everyone)',
                                         option_type=3,
                                         required=False),
             manage_commands.create_option(name='reply_is_hidden',
-                                        description='Botの実行結果を全員に見せるどうか(リマインド自体は普通です/他の人にもリマインドを使わせたい場合、全員に見せる方がオススメです))',
+                                        description='Botの実行結果を全員に見せるどうか(配信通知自体は普通です/他の人にも配信通知登録を使わせたい場合、全員に見せる方がオススメです))',
                                         option_type=3,
                                         required=False,
                                         choices=[
@@ -161,7 +161,7 @@ class LiveNotificationCog(commands.Cog):
             guild_id = ctx.guild.id
         else:
             if notification_chanel is not None and notification_chanel.upper() != 'DM':
-                msg = 'DMでチャンネル指定はできません。チャンネルは未指定でリマインドを登録ください。'
+                msg = 'DMでチャンネル指定はできません。チャンネルは未指定で配信通知を登録ください。'
                 await ctx.send(msg, hidden = True)
                 LOG.info(msg)
                 return
@@ -175,7 +175,7 @@ class LiveNotificationCog(commands.Cog):
             if notification_chanel.upper() == 'DM': # チャンネルが'DM'なら、ギルドとチャンネルをNoneとする
                 guild_id = None
                 if self.liveNotification.saved_dm_guild is None:
-                    msg = 'ギルドが何も登録されていない段階で、DMを登録することはできません。ギルドを登録してから再度リマインドの登録をしてください。'
+                    msg = 'ギルドが何も登録されていない段階で、DMを登録することはできません。ギルドを登録してから再度、配信通知の登録をしてください。'
                     await ctx.send(msg, hidden = True)
                     LOG.info(msg)
                     return
@@ -199,9 +199,9 @@ class LiveNotificationCog(commands.Cog):
                 channel_id = None
 
         # 実際の処理(live_notification.pyでやる)
-        message = await self.liveNotification.register_live_notification(guild_id, ctx.author.id, live_channel_id, channel_id, mention)
+        msg = await self.liveNotification.register_live_notification(guild_id, ctx.author.id, live_channel_id, channel_id, mention)
         hidden = True if reply_is_hidden == 'True' else False
-        await ctx.send(message, hidden = hidden)
+        await ctx.send(msg, hidden = hidden)
 
     @cog_ext.cog_slash(
         name='live-notification_read',
@@ -234,6 +234,108 @@ class LiveNotificationCog(commands.Cog):
         LOG.info('live-notificationのTaskを確認するぜ！')
         msg = self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
+        await ctx.send(msg, hidden = hidden)
+
+    @cog_ext.cog_slash(
+        name='live-notification_list',
+        guild_ids=guilds,
+        description='登録したライブ通知(YouTube,ニコ生)を確認する',
+        options=[
+            manage_commands.create_option(name='reply_is_hidden',
+                                            description='Botの実行結果を全員に見せるどうか',
+                                            option_type=3,
+                                            required=False,
+                                            choices=[
+                                                manage_commands.create_choice(
+                                                name='自分のみ',
+                                                value='True'),
+                                                manage_commands.create_choice(
+                                                name='全員に見せる',
+                                                value='False')
+                                            ])
+        ])
+    async def live_notification_list(self, ctx, reply_is_hidden: str = 'True'):
+        LOG.info('live-notificationを確認するぜ！')
+        self.check_printer_is_running()
+        hidden = True if reply_is_hidden == 'True' else False
+        result = self.liveNotification.list_live_notification(ctx.author.id)
+        # エラーメッセージの場合、str型で返却。それ以外はリスト(辞書型が格納されている)
+        if isinstance(result, str):
+            await ctx.send(result, hidden = hidden)
+        else:
+            embed = discord.Embed(
+                            title='ライブ通知(YouTube,ニコ生)のリスト',
+                            color=0x000000,
+                            # description=description,
+                            )
+            embed.set_author(name=self.bot.user,
+                            url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
+                            icon_url=self.bot.user.avatar_url
+                            )
+            for result_dict in result:
+                message_row = f'''
+                                種類: {result_dict.get('type')}, 
+                                配信者: {result_dict.get('title')}, 
+                                チャンネルID: {result_dict.get('channel_id')},
+                                通知先: {result_dict.get('channel')}, 
+                                最新動画ID: {result_dict.get('recent_id')}, 
+                                更新日時: {result_dict.get('updated_at')}
+                                '''
+                embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+            await ctx.send('あなたの登録したライブ通知はコチラです', embed=embed, hidden = hidden)
+
+    @cog_ext.cog_slash(
+        name='live-notification_toggle',
+        guild_ids=guilds,
+        description='ライブ通知のON/OFFを切り替えます(OFFの場合、通知されません)',
+        options=[
+            manage_commands.create_option(name='reply_is_hidden',
+                                            description='Botの実行結果を全員に見せるどうか',
+                                            option_type=3,
+                                            required=False,
+                                            choices=[
+                                                manage_commands.create_choice(
+                                                name='自分のみ',
+                                                value='True'),
+                                                manage_commands.create_choice(
+                                                name='全員に見せる',
+                                                value='False')
+                                            ])
+        ])
+    async def live_notification_toggle(self, ctx, reply_is_hidden: str = 'True'):
+        LOG.info('live-notificationをトグルで切り替えるぜ！')
+        self.check_printer_is_running()
+        hidden = True if reply_is_hidden == 'True' else False
+        msg = await self.liveNotification.toggle_user_status(ctx.author.id)
+        await ctx.send(msg, hidden = hidden)
+
+    @cog_ext.cog_slash(
+        name='live-notification_delete',
+        guild_ids=guilds,
+        description='ライブ通知(YouTube,ニコ生)を削除する',
+        options=[
+            manage_commands.create_option(name='live_channel_id',
+                                        description='YouTubeかニコ生のチャンネルID',
+                                        option_type=3,
+                                        required=True),
+            manage_commands.create_option(name='reply_is_hidden',
+                                        description='Botの実行結果を全員に見せるどうか',
+                                        option_type=3,
+                                        required=False,
+                                        choices=[
+                                            manage_commands.create_choice(
+                                            name='自分のみ',
+                                            value='True'),
+                                            manage_commands.create_choice(
+                                            name='全員に見せる',
+                                            value='False')
+                                        ])
+        ])
+    async def live_notification_delete(self, ctx, live_channel_id:str, reply_is_hidden: str = 'True'):
+        LOG.info('live-notificationを削除するぜ！')
+        self.check_printer_is_running()
+        hidden = True if reply_is_hidden == 'True' else False
+        msg = await self.liveNotification.delete_live_notification(ctx.author.id, live_channel_id)
         await ctx.send(msg, hidden = hidden)
 
     def check_printer_is_running(self):

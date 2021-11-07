@@ -15,12 +15,48 @@
     - YouTubeの場合は、`UCxxxxxxx`の部分
 - オプション
   - notification_chanel(通知チャンネル)
-    - #xxxxで指定したチャンネルにリマインドします
+    - #xxxxで指定したチャンネルに配信通知します
     - そのままチャンネル名を指定することもできます
-    - このオプションが**ない場合、コマンドを実行したチャンネルにリマインドします**
+    - このオプションが**ない場合、コマンドを実行したチャンネルに配信通知します**
   - mention(メンション)
-    - 通常のメッセージと同様に、@xxxx形式で入力してください（リマインド時にメンションされます）
+    - 通常のメッセージと同様に、@xxxx形式で入力してください（配信通知時にメンションされます）
       - `@here`, `@everyone`, `@username`等
+  - reply_is_hidden
+    - 自分のみ
+      - 実行結果は自分だけ見ることができます
+    - 全員に見せる
+      - 実行結果はBotからのリプライとして表示されます
+
+### `/live-notification_list`
+
+- 配信通知を確認します
+- オプション
+  - reply_is_hidden
+    - 自分のみ
+      - 実行結果は自分だけ見ることができます
+    - 全員に見せる
+      - 実行結果はBotからのリプライとして表示されます
+
+### `/live-notification_delete`
+
+- 配信通知を削除します
+- 必須のオプション(1つ)
+  - live_channel_id(配信通知対象のチャンネルID)
+    - ニコニコ生放送の場合は`coXXXXXX`の部分
+      - coは省略可
+    - YouTubeの場合は、`UCxxxxxxx`の部分
+- オプション
+  - reply_is_hidden
+    - 自分のみ
+      - 実行結果は自分だけ見ることができます
+    - 全員に見せる
+      - 実行結果はBotからのリプライとして表示されます
+
+### `/live-notification_toggle`
+
+- 配信通知のON/OFFを切り替えます
+  - 配信通知したくない場合に実行します(一時的に通知しない場合などにオススメします)
+- オプション
   - reply_is_hidden
     - 自分のみ
       - 実行結果は自分だけ見ることができます
@@ -37,7 +73,7 @@
     - 全員に見せる
       - 実行結果はBotからのリプライとして表示されます
 
-### その他のコマンドは検討中です(リマインドの削除など実装予定)
+### その他のコマンドは検討中です
 
 ## 環境変数
 
@@ -91,7 +127,7 @@
 ## 動かし方
 
 - wikiに書くつもりです(時期未定)
-- わからないことがあれば[Discussions](https://github.com/tetsuya-ki/discord-reminderbot/discussions)に書いてみてください
+- わからないことがあれば[Discussions](https://github.com/tetsuya-ki/discord-live-notificationbot/discussions)に書いてみてください
 
 ### 前提
 
@@ -103,5 +139,6 @@
 - 以下のコマンドを実行
 
 ```sh
+poetry install
 poetry run python discord-live-notificationbot.py
 ```
