@@ -387,6 +387,13 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
+                    # Herokuの時のみ、チャンネルにファイルを添付する
+                    try:
+                        await self.set_discord_attachment_file()
+                    except discord.errors.Forbidden:
+                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                        LOG.error(message)
+                        return message
 
                     return response_list
 
@@ -466,6 +473,13 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
+                    # Herokuの時のみ、チャンネルにファイルを添付する
+                    try:
+                        await self.set_discord_attachment_file()
+                    except discord.errors.Forbidden:
+                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                        LOG.error(message)
+                        return message
 
                     # 通知対象として返却
                     return [{'title': str(nico_live_response['data']['live']['title'])
