@@ -27,7 +27,6 @@ class LiveNotification:
 
     def __init__(self, bot):
         self.bot = bot
-        self.remind_mention = None  # リマインド時のメンション
         self.live_rows = None  # liveの一覧
         self.notification_rows = None  # notificationの結果
         self.aes = Aes_angou(setting.DISCORD_TOKEN)

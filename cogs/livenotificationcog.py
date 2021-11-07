@@ -134,7 +134,7 @@ class LiveNotificationCog(commands.Cog):
                                         option_type=3,
                                         required=False),
             manage_commands.create_option(name='reply_is_hidden',
-                                        description='Botの実行結果を全員に見せるどうか(リマインド自体は普通です/他の人にもリマインドを使わせたい場合、全員に見せる方がオススメです))',
+                                        description='Botの実行結果を全員に見せるどうか(配信通知自体は普通です/他の人にも配信通知登録を使わせたい場合、全員に見せる方がオススメです))',
                                         option_type=3,
                                         required=False,
                                         choices=[
@@ -161,7 +161,7 @@ class LiveNotificationCog(commands.Cog):
             guild_id = ctx.guild.id
         else:
             if notification_chanel is not None and notification_chanel.upper() != 'DM':
-                msg = 'DMでチャンネル指定はできません。チャンネルは未指定でリマインドを登録ください。'
+                msg = 'DMでチャンネル指定はできません。チャンネルは未指定で配信通知を登録ください。'
                 await ctx.send(msg, hidden = True)
                 LOG.info(msg)
                 return
@@ -175,7 +175,7 @@ class LiveNotificationCog(commands.Cog):
             if notification_chanel.upper() == 'DM': # チャンネルが'DM'なら、ギルドとチャンネルをNoneとする
                 guild_id = None
                 if self.liveNotification.saved_dm_guild is None:
-                    msg = 'ギルドが何も登録されていない段階で、DMを登録することはできません。ギルドを登録してから再度リマインドの登録をしてください。'
+                    msg = 'ギルドが何も登録されていない段階で、DMを登録することはできません。ギルドを登録してから再度、配信通知の登録をしてください。'
                     await ctx.send(msg, hidden = True)
                     LOG.info(msg)
                     return
