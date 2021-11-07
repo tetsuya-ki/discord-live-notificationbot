@@ -557,3 +557,135 @@ class LiveNotification:
         self.decode()
         self.read()
         self.encode()
+
+    def list_live_notification(self, author_id:int):
+        '''
+        登録した配信通知を表示します
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        # userの状態チェック
+        status = self._check_user_status(conn, author_id)
+        if status == None:
+            return 'あなたのデータがありません。`/live-notification-add`で配信通知を登録してください'
+        elif status == self.STATUS_INVALID:
+            return 'あなたの通知状態が無効になっています(何も通知されません)\n`/live-notification-toggle`で有効にできます'
+
+        # notification(type,live,userを結合)を取得
+        conn.row_factory = sqlite3.Row
+        with conn:
+            cur = conn.cursor()
+            select_notification_sql = '''
+                            select notification.id as "id"
+                                , type.name as "name"
+                                , live.title as "title"
+                                , live.channel_id as "channel_id"
+                                , live.recent_id as "recent_id"
+                                , live.updated_at as "updated_at"
+                                , notification.notification_channel as "notification_channel"
+                                from notification
+                                inner join type on notification.type_id = type.id
+                                inner join user on notification.user_id = user.id
+                                inner join live on notification.live_id = live.id
+                                where user.discord_user_id = ?
+                                order by notification.id, live.id
+                            '''
+            param = (author_id,)
+            LOG.debug(select_notification_sql)
+            cur.execute(select_notification_sql, param)
+            notification_rows = cur.fetchmany(1000)
+            result_dict_list = []
+            for notification_row in notification_rows:
+                channel = f'''<#{notification_row['notification_channel']}>''' if notification_row['notification_channel'] is not None else 'DM'
+                result_dict = {'notification_id': notification_row['id']
+                                , 'type': notification_row['name']
+                                , 'title': notification_row['title']
+                                , 'channel_id': notification_row['channel_id']
+                                , 'channel': channel
+                                , 'recent_id': notification_row['recent_id']
+                                , 'updated_at': notification_row['updated_at']}
+                result_dict_list.append(result_dict)
+        self.read()
+        self.encode()
+        LOG.debug(result_dict_list)
+        if len(result_dict_list) == 0:
+            message = 'あなたのデータがありません。`/live-notification-add`で配信通知を登録してください'
+            LOG.debug(message)
+            return message
+        return result_dict_list
+
+    async def toggle_user_status(self, author_id:int):
+        '''
+        userのステータスをトグルします(INVALID⇔VALID)
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        now = datetime.datetime.now(self.JST)
+        # userの状態チェック
+        status = self._check_user_status(conn, author_id)
+        update_sql = 'UPDATE user SET status = ?, updated_at = ? WHERE discord_user_id = ?'
+        message = 'あなたのデータがありません。`/live-notification-add`で配信通知を登録してください'
+        if status == None:
+            return message
+        with conn:
+            cur = conn.cursor()
+            if status == self.STATUS_INVALID:
+                param = (self.STATUS_VALID, now, author_id)
+                cur.execute(update_sql, param)
+                message = 'あなたの通知状態を有効にしました\n`/live-notification-toggle`で無効にできます'
+            else:
+                param = (self.STATUS_INVALID, now, author_id)
+                cur.execute(update_sql, param)
+                message = 'あなたの通知状態を無効にしました\n`/live-notification-toggle`で有効にできます'
+        conn.commit()
+        self.read()
+        self.encode()
+        # Herokuの時のみ、チャンネルにファイルを添付する
+        try:
+            await self.set_discord_attachment_file()
+        except discord.errors.Forbidden:
+            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+            LOG.error(message)
+            return message
+        return message
+
+    def _check_user_status(self, conn, author_id:int):
+        '''
+        userの状態を返却
+        '''
+        select_user_sql = 'SELECT status FROM user WHERE discord_user_id = ?'
+        with conn:
+            cur = conn.cursor()
+            cur.execute(select_user_sql, (author_id,))
+            fetch = cur.fetchone()
+            status = fetch[0] if fetch is not None else None
+            if status is None:
+                return None
+            else:
+                return status
+
+    async def delete_live_notification(self, author_id:int, channel_id:str):
+        '''
+        配信通知を削除
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        user_id = self.get_user(conn, author_id)
+        live_id,type_id = self.get_channel_id(conn, channel_id)
+        if live_id is None:
+            return f'{channel_id}は配信通知に存在しません(正しいチャンネルIDを指定ください)'
+        with conn:
+            cur = conn.cursor()
+            delete_sql = 'DELETE FROM notification WHERE user_id = ? and live_id = ?'
+            cur.execute(delete_sql, (user_id, live_id))
+        conn.commit()
+        self.read()
+        self.encode()
+        # Herokuの時のみ、チャンネルにファイルを添付する
+        try:
+            await self.set_discord_attachment_file()
+        except discord.errors.Forbidden:
+            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+            LOG.error(message)
+            return message
+        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id})を削除しました)'
