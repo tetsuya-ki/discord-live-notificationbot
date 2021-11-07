@@ -22,6 +22,8 @@ class LiveNotification:
     TYPE_YOUTUBE = 1
     TYPE_NICOLIVE = 2
     NOTIFICATION_MAX = 5
+    STATUS_VALID = 'VALID'
+    STATUS_INVALID = 'INVALID'
 
     def __init__(self, bot):
         self.bot = bot
@@ -278,7 +280,7 @@ class LiveNotification:
             if user_id is None:
                 now = datetime.datetime.now(self.JST)
                 create_user_sql = 'INSERT INTO user (discord_user_id, status, created_at, updated_at) VALUES (?,?,?,?)'
-                user_param = (author_id, 'VALID', now, now)
+                user_param = (author_id, self.STATUS_VALID, now, now)
                 conn.execute(create_user_sql, user_param)
                 # get id
                 get_id_sql = 'SELECT id FROM user WHERE rowid = last_insert_rowid()'
