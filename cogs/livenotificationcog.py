@@ -76,7 +76,7 @@ class LiveNotificationCog(commands.Cog):
                             url=watch_url
                             )
                             embed.set_author(name=self.bot.user,
-                                            url='https://repo.exapmle.com/bot',
+                                            url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
                                             icon_url=self.bot.user.avatar_url
                                             )
                             embed.add_field(name='開始日時',value=result_dict.get('started_at'))
@@ -122,7 +122,7 @@ class LiveNotificationCog(commands.Cog):
         description='ライブ通知(YouTube,ニコ生)を作成する',
         options=[
             manage_commands.create_option(name='live_channel_id',
-                                        description='YouTubeかニコ生のチャンネルID',
+                                        description='YouTubeかニコ生のチャンネルID(＊非公開のニコ生コミュニティは登録失敗します)',
                                         option_type=3,
                                         required=True),
             manage_commands.create_option(name='notification_chanel',
@@ -130,7 +130,7 @@ class LiveNotificationCog(commands.Cog):
                                         option_type=3,
                                         required=False),
             manage_commands.create_option(name='mention',
-                                        description='通知する際のメンション(@me, @here, @everyone)',
+                                        description='通知する際のメンション(@XXXX, @here, @everyone)',
                                         option_type=3,
                                         required=False),
             manage_commands.create_option(name='reply_is_hidden',
