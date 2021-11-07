@@ -224,11 +224,21 @@ class LiveNotification:
             LOG.debug('set_discord_attachment_file is over!')
 
     def decode(self):
-        if os.path.exists(self.aes.ENC_FILE_PATH):
+        '''
+        暗号化されたファイルを復号します（以下の条件に合致する場合は何もしません）
+        ＊KEEP_DECRYPTED_FILEがTRUE、かつ、復号済データが存在する場合、何もしない
+        '''
+        if not setting.KEEP_DECRYPTED_FILE and os.path.exists(self.aes.DEC_FILE_PATH):
+            return
+        elif os.path.exists(self.aes.ENC_FILE_PATH):
             self.aes.decode()
             os.remove(self.aes.ENC_FILE_PATH)
 
     def encode(self):
+        '''
+        暗号化し、復号データを削除します（以下の条件に合致する場合は削除はしません）
+        ＊KEEP_DECRYPTED_FILEがTRUE
+        '''
         if os.path.exists(self.aes.DEC_FILE_PATH):
             self.aes.encode()
             if setting.KEEP_DECRYPTED_FILE:
