@@ -6,7 +6,7 @@ import hashlib, os
 
 class Aes_angou:
     ENC_FILE = 'encrypted.bin'
-    DEC_FILE = 'reminder.db'
+    DEC_FILE = 'live.db'
 
     ENC_FILE_PATH = join(dirname(__file__), 'files' + os.sep + ENC_FILE)
     DEC_FILE_PATH = join(dirname(__file__), 'files' + os.sep + DEC_FILE)
