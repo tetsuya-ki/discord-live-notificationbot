@@ -96,14 +96,14 @@ class LiveNotificationCog(commands.Cog):
                                     notification_user = await self.bot.fetch_user(discord_user_id)
                                     text = notification_user or ''
                                 channel = await notification_user.create_dm()
-                                await channel.send(content=f'{mention} {message}', embed=embed)
+                                await channel.send(f'{mention} {message}', embed=embed)
                             else:
                                 channel = discord.utils.get(self.bot.get_all_channels(),
                                                             guild__id=notification['notification_guild'],
                                                             id=notification['notification_channel'])
                                 if channel is not None:
                                     try:
-                                        await channel.send(content=f'{mention} {message}', embed=embed)
+                                        await channel.send(f'{mention} {message}', embed=embed)
                                     except discord.errors.Forbidden:
                                         msg = f'''＊＊＊{notification['notification_guild']}のチャンネルへの投稿に失敗しました！＊＊＊'''
                                         LOG.error(msg)
@@ -199,9 +199,9 @@ class LiveNotificationCog(commands.Cog):
                 channel_id = None
 
         # 実際の処理(live_notification.pyでやる)
-        message = await self.liveNotification.register_live_notification(guild_id, ctx.author.id, live_channel_id, channel_id, mention)
+        msg = await self.liveNotification.register_live_notification(guild_id, ctx.author.id, live_channel_id, channel_id, mention)
         hidden = True if reply_is_hidden == 'True' else False
-        await ctx.send(message, hidden = hidden)
+        await ctx.send(msg, hidden = hidden)
 
     @cog_ext.cog_slash(
         name='live-notification_read',
