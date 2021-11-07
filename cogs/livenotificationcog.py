@@ -25,7 +25,7 @@ class LiveNotificationCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         await self.liveNotification.prepare()  # dbを作成
-        LOG.info(f'SQlite準備完了/ギルド件数:{len(self.guilds)}')
+        LOG.info(f'SQlite準備完了/ギルド件数:{len(self.bot.guilds)}')
         LOG.debug(self.bot.guilds)
         self.printer.start()
 
