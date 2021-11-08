@@ -15,6 +15,7 @@ class LiveNotification:
     DATABASE = 'live.db'
     FILE_PATH = join(dirname(__file__), 'files' + os.sep + DATABASE)
     JST = timezone(timedelta(hours=+9), 'JST')
+    DATETIME_FORMAT = '%Y/%m/%d(%a) %H:%M:%S'
     LIVE_CONTROL_CHANNEL = 'live_control_channel'
     YOUTUBE = 'YouTube'
     NICOLIVE = 'ニコ生'
@@ -355,7 +356,10 @@ class LiveNotification:
                             break
                         title = entry[3].text if entry[3] is not None else ''
                         watch_url = entry[4].attrib['href'] if entry[4] is not None else ''
-                        started_at = entry[6].text if entry[6] is not None else ''
+                        started_at_text = entry[6].text if entry[6] is not None else ''
+                        dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
+                        dt_jst_text = dt_started_utc.astimezone(self.JST).strftime(self.DATETIME_FORMAT)
+
                         media_group = entry[8] if entry[8] is not None else None
                         thumbnail = ''
                         description = ''
@@ -365,7 +369,7 @@ class LiveNotification:
                         entry_dict = {'title': title
                                     ,'description': description
                                     ,'watch_url': watch_url
-                                    ,'started_at': started_at
+                                    ,'started_at': dt_jst_text
                                     , 'thumbnail': thumbnail}
                         response_list.append(entry_dict)
 
@@ -480,11 +484,15 @@ class LiveNotification:
                         LOG.error(message)
                         return message
 
+                    # ニコ生は地味にISOフォーマットではないので変換する(replace('+0900','+09:00'))
+                    nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
+                    dt_started_jst = datetime.datetime.fromisoformat(nico_started_at)
+                    dt_jst_text = dt_started_jst.strftime(self.DATETIME_FORMAT)
                     # 通知対象として返却
                     return [{'title': str(nico_live_response['data']['live']['title'])
                             ,'description': str(nico_live_response['data']['live']['description'])
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
-                            ,'started_at': str(nico_live_response['data']['live']['started_at'])}]
+                            ,'started_at': dt_jst_text}]
 
     def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str):
         '''
@@ -596,13 +604,15 @@ class LiveNotification:
             result_dict_list = []
             for notification_row in notification_rows:
                 channel = f'''<#{notification_row['notification_channel']}>''' if notification_row['notification_channel'] is not None else 'DM'
+                dt_updated_jst = datetime.datetime.fromisoformat(notification_row['updated_at'])
+                dt_jst_text = dt_updated_jst.strftime(self.DATETIME_FORMAT)
                 result_dict = {'notification_id': notification_row['id']
                                 , 'type': notification_row['name']
                                 , 'title': notification_row['title']
                                 , 'channel_id': notification_row['channel_id']
                                 , 'channel': channel
                                 , 'recent_id': notification_row['recent_id']
-                                , 'updated_at': notification_row['updated_at']}
+                                , 'updated_at': dt_jst_text}
                 result_dict_list.append(result_dict)
         self.read()
         self.encode()
