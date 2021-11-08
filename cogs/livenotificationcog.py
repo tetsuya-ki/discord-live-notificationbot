@@ -40,7 +40,7 @@ class LiveNotificationCog(commands.Cog):
         # liveの分だけ確認していく
         for live in self.liveNotification.live_rows:
             if live['type_id'] == self.liveNotification.TYPE_YOUTUBE:
-                result_dict_list = await self.liveNotification.get_youtube(live['channel_id'], live['recent_id'])
+                result_dict_list = await self.liveNotification.get_youtube(live['channel_id'], live['recent_id'], live['recent_movie_length'])
                 message_suffix = 'の動画が追加されました！'
             elif live['type_id'] == self.liveNotification.TYPE_NICOLIVE:
                 result_dict_list = await self.liveNotification.get_nicolive(live['channel_id'], live['recent_id'])
@@ -55,7 +55,11 @@ class LiveNotificationCog(commands.Cog):
                         for result_dict in result_dict_list:
                             video_title = result_dict.get('title')
                             watch_url = result_dict.get('watch_url')
-                            message = f'''{notification['name']}で{live['title']}さん{message_suffix}'''
+                            if result_dict.get('live_streaming_start_flg') is None:
+                                message = f'''{notification['name']}で{live['title']}さん{message_suffix}'''
+                            else:
+                                # YouTubeで予約配信していたものが配信開始された場合を想定
+                                message = f'''{notification['name']}で{live['title']}さんの配信が開始されました(おそらく)！'''
                             description = f'''{result_dict.get('description')} by {live['title']}'''
 
                             # フィルター処理
@@ -79,7 +83,7 @@ class LiveNotificationCog(commands.Cog):
                                             url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
                                             icon_url=self.bot.user.avatar_url
                                             )
-                            embed.add_field(name='開始日時',value=result_dict.get('started_at'))
+                            embed.add_field(name='配信日時',value=result_dict.get('started_at'))
                             if result_dict.get('thumbnail') is not None:
                                 embed.set_thumbnail(url=result_dict.get('thumbnail'))
 
@@ -154,7 +158,6 @@ class LiveNotificationCog(commands.Cog):
                         reply_is_hidden: str = 'True'):
         LOG.info('live-notificationをaddするぜ！')
         self.check_printer_is_running()
-        await ctx.defer()
 
         # ギルドの設定
         if ctx.guild is not None:
