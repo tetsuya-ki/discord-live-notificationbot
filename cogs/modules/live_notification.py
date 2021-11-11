@@ -93,23 +93,27 @@ class LiveNotification:
                 sql_list = [create_table_user_sql, create_table_type_sql, create_table_live_sql, create_table_notification_sql]
                 for create_table_sql in sql_list:
                     cur.execute(create_table_sql)
-
-                # add type
-                now = datetime.datetime.now(self.JST)
-                insert_sql = 'INSERT INTO type (name,created_at,updated_at) VALUES (?,?,?)'
-                check_sql = 'SELECT COUNT(*) FROM type WHERE name = '
-                text = check_sql+"'"+self.YOUTUBE+"'"
-                cur.execute(check_sql+"'"+self.YOUTUBE+"'")
-                if cur.fetchall()[0][0] == 0:
-                    remind_param_youtube = (self.YOUTUBE, now, now)
-                    cur.execute(insert_sql, remind_param_youtube)
-                cur.execute(check_sql+"'"+self.NICOLIVE+"'")
-                if cur.fetchall()[0][0] == 0:
-                    remind_param_nicolive = (self.NICOLIVE, now, now)
-                    cur.execute(insert_sql, remind_param_nicolive)
-                    conn.commit()
         else:
             self.decode()
+
+        # add type
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            insert_sql = 'INSERT INTO type (name,created_at,updated_at) VALUES (?,?,?)'
+            check_sql = 'SELECT COUNT(*) FROM type WHERE name = ? '
+            cur.execute(check_sql, (self.YOUTUBE,))
+            if cur.fetchall()[0][0] == 0:
+                remind_param_youtube = (self.YOUTUBE, now, now)
+                cur.execute(insert_sql, remind_param_youtube)
+                conn.commit()
+            cur.execute(check_sql, (self.NICOLIVE,))
+            if cur.fetchall()[0][0] == 0:
+                remind_param_nicolive = (self.NICOLIVE, now, now)
+                cur.execute(insert_sql, remind_param_nicolive)
+                conn.commit()
+
         self.read()
         self.encode()
         LOG.info('準備完了')
