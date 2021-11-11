@@ -241,7 +241,7 @@ class LiveNotificationCog(commands.Cog):
 
     @cog_ext.cog_slash(
         name='live-notification_list',
-        guild_ids=guilds,
+        # guild_ids=guilds,
         description='登録したライブ通知(YouTube,ニコ生)を確認する',
         options=[
             manage_commands.create_option(name='reply_is_hidden',
@@ -289,7 +289,7 @@ class LiveNotificationCog(commands.Cog):
 
     @cog_ext.cog_slash(
         name='live-notification_toggle',
-        guild_ids=guilds,
+        # guild_ids=guilds,
         description='ライブ通知のON/OFFを切り替えます(OFFの場合、通知されません)',
         options=[
             manage_commands.create_option(name='reply_is_hidden',
@@ -314,7 +314,7 @@ class LiveNotificationCog(commands.Cog):
 
     @cog_ext.cog_slash(
         name='live-notification_delete',
-        guild_ids=guilds,
+        # guild_ids=guilds,
         description='ライブ通知(YouTube,ニコ生)を削除する',
         options=[
             manage_commands.create_option(name='live_channel_id',
