@@ -355,25 +355,31 @@ class LiveNotification:
                     response = ET.fromstring(await r.text())
                     youtube_recent_id = response[7][1].text if len(response) > 8 and response[8] is not None else None
                     youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
-                    # pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
-                    youtube_recent_length = 0
-                    try:
-                        youtube = YouTube(youtube_recent_url)
-                        youtube_recent_length = youtube.length
-                        if youtube_recent_length == 0:
-                            youtube.streaming_data # 未配信の場合、Errorが発生
-                            youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
-                    except:
-                        LOG.info(f'youtube.streaming_data({youtube_recent_id}) is None.')
 
-                    # 通知するべきかチェック(最新動画の時間が0以外(配信済なので処理しない))
+                    # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
+                    if (recent_id != youtube_recent_id) \
+                        or (recent_id == youtube_recent_id and recent_movie_length == 0):
+                        youtube_recent_length = 0
+                        try:
+                            youtube = YouTube(youtube_recent_url)
+                            youtube_recent_length = youtube.length
+                            if youtube_recent_length == 0:
+                                youtube.streaming_data # 未配信の場合、Errorが発生
+                                youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
+                        except:
+                            LOG.info(f'youtube.streaming_data({youtube_recent_id}) is None.')
+                    else:
+                        # 動画の追加がなく、動画の長さが登録されている場合は対応なし
+                        return
+
+                    # 配信開始として通知するべきかチェック
                     live_streaming_start_flg = None
                     if recent_id == youtube_recent_id:
-                        # DBの最新動画の長さが0以外(配信済)、または、
-                        if recent_movie_length != 0 or youtube_recent_length == 0:
+                        # DBの最新動画の長さが0のまま変わってない場合は、対応なし
+                        if youtube_recent_length == 0:
                             return
                         # 今回チェックした際に配信開始していたパターン
-                        elif recent_movie_length == 0 and youtube_recent_length != 0:
+                        elif youtube_recent_length != 0:
                             live_streaming_start_flg = True
 
                     response_list = []
