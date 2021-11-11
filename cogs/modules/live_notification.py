@@ -403,8 +403,12 @@ class LiveNotification:
                         if media_group is not None:
                             thumbnail = media_group[2].attrib['url'] if media_group[2] is not None else ''
                             description = media_group[3].text if media_group[3] is not None else ''
-
+                        # 前回と同じならメッセージを変更しておく
+                        raw_description = description
+                        if len(response_list) != 0 and response_list[-1].get('raw_description') == description:
+                            description = '(1つ前と同じ説明文です)'
                         entry_dict = {'title': title
+                                    ,'raw_description': raw_description
                                     ,'description': description
                                     ,'watch_url': watch_url
                                     ,'started_at': dt_jst_text
