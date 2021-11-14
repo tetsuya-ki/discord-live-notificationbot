@@ -385,6 +385,9 @@ class LiveNotification:
                         # 今回チェックした際に配信開始していたパターン
                         elif youtube_recent_length != 0:
                             live_streaming_start_flg = True
+                    # 新しく予約配信が追加されたパターン
+                    elif youtube_recent_length == 0:
+                        live_streaming_start_flg = False
 
                     response_list = []
                     for entry in response[7:]:
