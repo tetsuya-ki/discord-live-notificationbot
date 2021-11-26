@@ -378,13 +378,12 @@ class LiveNotification:
 
                     # 配信開始として通知するべきかチェック
                     live_streaming_start_flg = None
-                    if recent_id == youtube_recent_id:
-                        # DBの最新動画の長さが0のまま変わってない場合は、対応なし
-                        if youtube_recent_length == 0:
-                            return
-                        # 今回チェックした際に配信開始していたパターン
-                        elif youtube_recent_length != 0:
-                            live_streaming_start_flg = True
+                    # 今回チェックした際に配信開始していたパターン
+                    if youtube.length == 0 and youtube_recent_length != 0:
+                        live_streaming_start_flg = True
+                    # DBの最新動画の長さが0のまま変わってない場合は、対応なし
+                    if recent_id == youtube_recent_id and youtube_recent_length == 0:
+                        return
                     # 新しく予約配信が追加されたパターン
                     elif youtube_recent_length == 0:
                         live_streaming_start_flg = False
