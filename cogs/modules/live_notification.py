@@ -348,7 +348,7 @@ class LiveNotification:
             conn.commit()
             return live_id,1
 
-    async def get_youtube(self, channel_id:str, recent_id:str, recent_movie_length:int):
+    async def get_youtube(self, channel_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
         '''
         YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
         '''
@@ -359,6 +359,16 @@ class LiveNotification:
                     response = ET.fromstring(await r.text())
                     youtube_recent_id = response[7][1].text if len(response) > 8 and response[8] is not None else None
                     youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+
+                    # 謎の削除かチェック
+                    recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
+                    started_at_text = response[7][6].text if len(response) > 7 and response[7][6] is not None else ''
+                    if started_at_text != '':
+                        dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
+                        dt_jst = dt_started_utc.astimezone(self.JST)
+                        # DBの最近の更新日時の方がxmlの最新よりも新しい場合は、削除か何かと判断し、対応しない
+                        if recent_updated_at >= dt_jst:
+                            return
 
                     # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
                     if (recent_id != youtube_recent_id) \

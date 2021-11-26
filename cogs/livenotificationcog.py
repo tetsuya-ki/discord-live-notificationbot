@@ -40,7 +40,7 @@ class LiveNotificationCog(commands.Cog):
         # liveの分だけ確認していく
         for live in self.liveNotification.live_rows:
             if live['type_id'] == self.liveNotification.TYPE_YOUTUBE:
-                result_dict_list = await self.liveNotification.get_youtube(live['channel_id'], live['recent_id'], live['recent_movie_length'])
+                result_dict_list = await self.liveNotification.get_youtube(live['channel_id'], live['recent_id'], live['recent_movie_length'], live['updated_at'])
                 message_suffix = 'の動画が追加されました！'
             elif live['type_id'] == self.liveNotification.TYPE_NICOLIVE:
                 result_dict_list = await self.liveNotification.get_nicolive(live['channel_id'], live['recent_id'])
