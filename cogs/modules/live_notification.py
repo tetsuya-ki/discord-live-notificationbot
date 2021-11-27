@@ -366,8 +366,8 @@ class LiveNotification:
                     if started_at_text != '':
                         dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
                         dt_jst = dt_started_utc.astimezone(self.JST)
-                        # DBの最近の更新日時の方がxmlの最新よりも新しい場合は、削除か何かと判断し、対応しない
-                        if recent_updated_at >= dt_jst:
+                        # DBの最近の更新日時の方がxmlの最新よりも新しい場合は、削除か何かと判断し、対応しない(配信前が登録されていた場合は先に進む)
+                        if recent_updated_at >= dt_jst and recent_movie_length != 0:
                             return
 
                     # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
