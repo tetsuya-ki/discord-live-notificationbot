@@ -25,7 +25,7 @@ class LiveNotificationCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         await self.liveNotification.prepare()  # dbを作成
-        LOG.info(f'SQlite準備完了/ギルド件数:{len(self.guilds)}')
+        LOG.info(f'SQlite準備完了/ギルド件数:{len(self.bot.guilds)}')
         LOG.debug(self.bot.guilds)
         self.printer.start()
 
@@ -40,7 +40,7 @@ class LiveNotificationCog(commands.Cog):
         # liveの分だけ確認していく
         for live in self.liveNotification.live_rows:
             if live['type_id'] == self.liveNotification.TYPE_YOUTUBE:
-                result_dict_list = await self.liveNotification.get_youtube(live['channel_id'], live['recent_id'])
+                result_dict_list = await self.liveNotification.get_youtube(live['channel_id'], live['recent_id'], live['recent_movie_length'], live['updated_at'])
                 message_suffix = 'の動画が追加されました！'
             elif live['type_id'] == self.liveNotification.TYPE_NICOLIVE:
                 result_dict_list = await self.liveNotification.get_nicolive(live['channel_id'], live['recent_id'])
@@ -55,7 +55,14 @@ class LiveNotificationCog(commands.Cog):
                         for result_dict in result_dict_list:
                             video_title = result_dict.get('title')
                             watch_url = result_dict.get('watch_url')
-                            message = f'''{notification['name']}で{live['title']}さん{message_suffix}'''
+                            if result_dict.get('live_streaming_start_flg') is None:
+                                message = f'''{notification['name']}で{live['title']}さん{message_suffix}'''
+                            elif result_dict.get('live_streaming_start_flg') is True:
+                                # YouTubeで予約配信していたものが配信開始された場合を想定
+                                message = f'''{notification['name']}で{live['title']}さんの配信が開始されました(おそらく)！'''
+                            elif result_dict.get('live_streaming_start_flg') is False:
+                                # YouTubeで予約配信が追加された場合を想定
+                                message = f'''{notification['name']}で{live['title']}さんの予約配信が追加されました！'''
                             description = f'''{result_dict.get('description')} by {live['title']}'''
 
                             # フィルター処理
@@ -79,7 +86,7 @@ class LiveNotificationCog(commands.Cog):
                                             url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
                                             icon_url=self.bot.user.avatar_url
                                             )
-                            embed.add_field(name='開始日時',value=result_dict.get('started_at'))
+                            embed.add_field(name='配信日時',value=result_dict.get('started_at'))
                             if result_dict.get('thumbnail') is not None:
                                 embed.set_thumbnail(url=result_dict.get('thumbnail'))
 
@@ -154,7 +161,6 @@ class LiveNotificationCog(commands.Cog):
                         reply_is_hidden: str = 'True'):
         LOG.info('live-notificationをaddするぜ！')
         self.check_printer_is_running()
-        await ctx.defer()
 
         # ギルドの設定
         if ctx.guild is not None:
@@ -238,7 +244,7 @@ class LiveNotificationCog(commands.Cog):
 
     @cog_ext.cog_slash(
         name='live-notification_list',
-        guild_ids=guilds,
+        # guild_ids=guilds,
         description='登録したライブ通知(YouTube,ニコ生)を確認する',
         options=[
             manage_commands.create_option(name='reply_is_hidden',
@@ -286,7 +292,7 @@ class LiveNotificationCog(commands.Cog):
 
     @cog_ext.cog_slash(
         name='live-notification_toggle',
-        guild_ids=guilds,
+        # guild_ids=guilds,
         description='ライブ通知のON/OFFを切り替えます(OFFの場合、通知されません)',
         options=[
             manage_commands.create_option(name='reply_is_hidden',
@@ -311,7 +317,7 @@ class LiveNotificationCog(commands.Cog):
 
     @cog_ext.cog_slash(
         name='live-notification_delete',
-        guild_ids=guilds,
+        # guild_ids=guilds,
         description='ライブ通知(YouTube,ニコ生)を削除する',
         options=[
             manage_commands.create_option(name='live_channel_id',

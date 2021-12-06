@@ -5,16 +5,18 @@ from datetime import timedelta, timezone
 from discord.ext import commands
 from os.path import join, dirname
 from logging import getLogger
+from pytube import YouTube
 from .aes_angou import Aes_angou
 from . import setting
 
-import datetime, discord, sqlite3, os
+import datetime, discord, sqlite3, os, pytube
 LOG = getLogger('live-notification-bot')
 
 class LiveNotification:
     DATABASE = 'live.db'
     FILE_PATH = join(dirname(__file__), 'files' + os.sep + DATABASE)
     JST = timezone(timedelta(hours=+9), 'JST')
+    DATETIME_FORMAT = '%Y/%m/%d(%a) %H:%M:%S'
     LIVE_CONTROL_CHANNEL = 'live_control_channel'
     YOUTUBE = 'YouTube'
     NICOLIVE = 'ニコ生'
@@ -69,6 +71,7 @@ class LiveNotification:
                                         live_author_id integer,
                                         channel_id text,
                                         recent_id text,
+                                        recent_movie_length integer,
                                         title text,
                                         created_at datetime,
                                         updated_at datetime
@@ -90,23 +93,27 @@ class LiveNotification:
                 sql_list = [create_table_user_sql, create_table_type_sql, create_table_live_sql, create_table_notification_sql]
                 for create_table_sql in sql_list:
                     cur.execute(create_table_sql)
-
-                # add type
-                now = datetime.datetime.now(self.JST)
-                insert_sql = 'INSERT INTO type (name,created_at,updated_at) VALUES (?,?,?)'
-                check_sql = 'SELECT COUNT(*) FROM type WHERE name = '
-                text = check_sql+"'"+self.YOUTUBE+"'"
-                cur.execute(check_sql+"'"+self.YOUTUBE+"'")
-                if cur.fetchall()[0][0] == 0:
-                    remind_param_youtube = (self.YOUTUBE, now, now)
-                    cur.execute(insert_sql, remind_param_youtube)
-                cur.execute(check_sql+"'"+self.NICOLIVE+"'")
-                if cur.fetchall()[0][0] == 0:
-                    remind_param_nicolive = (self.NICOLIVE, now, now)
-                    cur.execute(insert_sql, remind_param_nicolive)
-                    conn.commit()
         else:
             self.decode()
+
+        # add type
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            insert_sql = 'INSERT INTO type (name,created_at,updated_at) VALUES (?,?,?)'
+            check_sql = 'SELECT COUNT(*) FROM type WHERE name = ? '
+            cur.execute(check_sql, (self.YOUTUBE,))
+            if cur.fetchall()[0][0] == 0:
+                remind_param_youtube = (self.YOUTUBE, now, now)
+                cur.execute(insert_sql, remind_param_youtube)
+                conn.commit()
+            cur.execute(check_sql, (self.NICOLIVE,))
+            if cur.fetchall()[0][0] == 0:
+                remind_param_nicolive = (self.NICOLIVE, now, now)
+                cur.execute(insert_sql, remind_param_nicolive)
+                conn.commit()
+
         self.read()
         self.encode()
         LOG.info('準備完了')
@@ -316,14 +323,22 @@ class LiveNotification:
                     response = ET.fromstring(await r.text())
                     title = response[3].text if len(response) > 3 and response[3] is not None else None
                     recent_id = response[7][1].text if len(response) > 8 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
                 else:
                     return None,None
         # データ登録
         with conn:
             cur = conn.cursor()
             now = datetime.datetime.now(self.JST)
-            create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?)'
-            live_param = (1, None, channel_id, recent_id, title, now, now)
+            # pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
+            youtube_recent_length = 0
+            try:
+                youtube_recent_length = YouTube(youtube_recent_url).length
+            except:
+                pass
+
+            create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, recent_movie_length, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)'
+            live_param = (1, None, channel_id, recent_id, youtube_recent_length, title, now, now)
             cur.execute(create_live_sql, live_param)
             # get id
             get_id_sql = 'SELECT id FROM live WHERE rowid = last_insert_rowid()'
@@ -333,7 +348,7 @@ class LiveNotification:
             conn.commit()
             return live_id,1
 
-    async def get_youtube(self, channel_id:str, recent_id:str):
+    async def get_youtube(self, channel_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
         '''
         YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
         '''
@@ -343,40 +358,92 @@ class LiveNotification:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
                     youtube_recent_id = response[7][1].text if len(response) > 8 and response[8] is not None else None
-                    # すでに通知済かチェック
-                    if recent_id == youtube_recent_id:
+                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+
+                    # 謎の削除かチェック
+                    recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
+                    started_at_text = response[7][6].text if len(response) > 7 and response[7][6] is not None else ''
+                    if started_at_text != '':
+                        dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
+                        dt_jst = dt_started_utc.astimezone(self.JST)
+                        # DBの最近の更新日時の方がxmlの最新よりも新しい場合は、削除か何かと判断し、対応しない(配信前が登録されていた場合は先に進む)
+                        if recent_updated_at >= dt_jst and recent_movie_length != 0:
+                            return
+
+                    # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
+                    if (recent_id != youtube_recent_id) \
+                        or (recent_id == youtube_recent_id and recent_movie_length == 0):
+                        youtube_recent_length = 0
+                        try:
+                            youtube = YouTube(youtube_recent_url)
+                            youtube_recent_length = youtube.length
+                            if youtube_recent_length == 0:
+                                youtube.streaming_data # 未配信の場合、Errorが発生
+                                youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
+                        except:
+                            LOG.info(f'youtube.streaming_data({youtube_recent_id}) is None.')
+                    else:
+                        # 動画の追加がなく、動画の長さが登録されている場合は対応なし
                         return
+
+                    # 配信開始として通知するべきかチェック
+                    live_streaming_start_flg = None
+                    # 今回チェックした際に配信開始していたパターン
+                    if youtube.length == 0 and youtube_recent_length != 0:
+                        live_streaming_start_flg = True
+                    # DBの最新動画の長さが0のまま変わってない場合は、対応なし
+                    if recent_id == youtube_recent_id and youtube_recent_length == 0:
+                        return
+                    # 新しく予約配信が追加されたパターン
+                    elif youtube_recent_length == 0:
+                        live_streaming_start_flg = False
 
                     response_list = []
                     for entry in response[7:]:
                         video_id = entry[1].text if entry[1] is not None else ''
-                        # recent_idまで来くるか、通知最大件数を超えたら追加をやめる
-                        if recent_id == video_id or len(response_list) > self.NOTIFICATION_MAX:
+                        # recent_idまで来るか、元々未配信だったものが配信され次の動画に来た場合か、通知最大件数を超えたら追加をやめる
+                        if (recent_movie_length != 0 and recent_id == video_id) \
+                            or (recent_movie_length == 0 and recent_id != video_id) \
+                            or (len(response_list) > self.NOTIFICATION_MAX):
                             break
                         title = entry[3].text if entry[3] is not None else ''
                         watch_url = entry[4].attrib['href'] if entry[4] is not None else ''
-                        started_at = entry[6].text if entry[6] is not None else ''
+                        started_at_text = entry[6].text if entry[6] is not None else ''
+                        dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
+                        dt_jst_text = dt_started_utc.astimezone(self.JST).strftime(self.DATETIME_FORMAT)
+
+                        # media_groupに属する要素の処理
                         media_group = entry[8] if entry[8] is not None else None
                         thumbnail = ''
                         description = ''
                         if media_group is not None:
                             thumbnail = media_group[2].attrib['url'] if media_group[2] is not None else ''
                             description = media_group[3].text if media_group[3] is not None else ''
+                        # 前回と同じならメッセージを変更しておく
+                        raw_description = description
+                        if len(response_list) != 0 and response_list[-1].get('raw_description') == description:
+                            description = '(1つ前と同じ説明文です)'
                         entry_dict = {'title': title
+                                    ,'raw_description': raw_description
                                     ,'description': description
                                     ,'watch_url': watch_url
-                                    ,'started_at': started_at
+                                    ,'started_at': dt_jst_text
                                     , 'thumbnail': thumbnail}
                         response_list.append(entry_dict)
 
+                    # 最初の1つだけライブ配信開始フラグを入れる
+                    if len(response_list) > 0:
+                        first_dict = response_list.pop(0)
+                        first_dict['live_streaming_start_flg'] = live_streaming_start_flg
+                        response_list.insert(0, first_dict)
                     # recent_idの更新処理
                     self.decode()
                     conn = sqlite3.connect(self.FILE_PATH)
                     with conn:
                         cur = conn.cursor()
                         now = datetime.datetime.now(self.JST)
-                        update_recent_id_sql = 'UPDATE live SET recent_id = ?, updated_at = ? WHERE channel_id = ?'
-                        param = (youtube_recent_id, now, channel_id)
+                        update_recent_id_sql = 'UPDATE live SET recent_id = ?, recent_movie_length = ?, updated_at = ? WHERE channel_id = ?'
+                        param = (youtube_recent_id, youtube_recent_length, now, channel_id)
                         cur.execute(update_recent_id_sql, param)
                         # get id
                         get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
@@ -480,11 +547,15 @@ class LiveNotification:
                         LOG.error(message)
                         return message
 
+                    # ニコ生は地味にISOフォーマットではないので変換する(replace('+0900','+09:00'))
+                    nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
+                    dt_started_jst = datetime.datetime.fromisoformat(nico_started_at)
+                    dt_jst_text = dt_started_jst.strftime(self.DATETIME_FORMAT)
                     # 通知対象として返却
                     return [{'title': str(nico_live_response['data']['live']['title'])
                             ,'description': str(nico_live_response['data']['live']['description'])
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
-                            ,'started_at': str(nico_live_response['data']['live']['started_at'])}]
+                            ,'started_at': dt_jst_text}]
 
     def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str):
         '''
@@ -580,6 +651,7 @@ class LiveNotification:
                                 , live.title as "title"
                                 , live.channel_id as "channel_id"
                                 , live.recent_id as "recent_id"
+                                , live.recent_movie_length as "recent_movie_length"
                                 , live.updated_at as "updated_at"
                                 , notification.notification_channel as "notification_channel"
                                 from notification
@@ -596,13 +668,16 @@ class LiveNotification:
             result_dict_list = []
             for notification_row in notification_rows:
                 channel = f'''<#{notification_row['notification_channel']}>''' if notification_row['notification_channel'] is not None else 'DM'
+                dt_updated_jst = datetime.datetime.fromisoformat(notification_row['updated_at'])
+                dt_jst_text = dt_updated_jst.strftime(self.DATETIME_FORMAT)
                 result_dict = {'notification_id': notification_row['id']
                                 , 'type': notification_row['name']
                                 , 'title': notification_row['title']
                                 , 'channel_id': notification_row['channel_id']
                                 , 'channel': channel
                                 , 'recent_id': notification_row['recent_id']
-                                , 'updated_at': notification_row['updated_at']}
+                                , 'recent_movie_length': notification_row['recent_movie_length']
+                                , 'updated_at': dt_jst_text}
                 result_dict_list.append(result_dict)
         self.read()
         self.encode()
