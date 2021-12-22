@@ -26,6 +26,7 @@ class LiveNotification:
     NOTIFICATION_MAX = 5
     STATUS_VALID = 'VALID'
     STATUS_INVALID = 'INVALID'
+    DESCRIPTION_LENGTH = 2000
 
     def __init__(self, bot):
         self.bot = bot
@@ -418,7 +419,9 @@ class LiveNotification:
                         description = ''
                         if media_group is not None:
                             thumbnail = media_group[2].attrib['url'] if media_group[2] is not None else ''
-                            description = media_group[3].text if media_group[3] is not None else ''
+                            media_group_3 = media_group[3].text if media_group[3] is not None else ''
+                            description = self._str_truncate(media_group_3, self.DESCRIPTION_LENGTH, '(以下省略)')
+
                         # 前回と同じならメッセージを変更しておく
                         raw_description = description
                         if len(response_list) != 0 and response_list[-1].get('raw_description') == description:
@@ -551,9 +554,13 @@ class LiveNotification:
                     nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
                     dt_started_jst = datetime.datetime.fromisoformat(nico_started_at)
                     dt_jst_text = dt_started_jst.strftime(self.DATETIME_FORMAT)
+
+                    # 説明文の文字数削減
+                    description = self._str_truncate(nico_live_response['data']['live']['description'], self.DESCRIPTION_LENGTH, '(以下省略)')
+
                     # 通知対象として返却
                     return [{'title': str(nico_live_response['data']['live']['title'])
-                            ,'description': str(nico_live_response['data']['live']['description'])
+                            ,'description': str(description)
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
                             ,'started_at': dt_jst_text}]
 
@@ -723,21 +730,6 @@ class LiveNotification:
             return message
         return message
 
-    def _check_user_status(self, conn, author_id:int):
-        '''
-        userの状態を返却
-        '''
-        select_user_sql = 'SELECT status FROM user WHERE discord_user_id = ?'
-        with conn:
-            cur = conn.cursor()
-            cur.execute(select_user_sql, (author_id,))
-            fetch = cur.fetchone()
-            status = fetch[0] if fetch is not None else None
-            if status is None:
-                return None
-            else:
-                return status
-
     async def delete_live_notification(self, author_id:int, channel_id:str):
         '''
         配信通知を削除
@@ -763,3 +755,28 @@ class LiveNotification:
             LOG.error(message)
             return message
         return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id})を削除しました)'
+
+    def _check_user_status(self, conn, author_id:int):
+        '''
+        userの状態を返却
+        '''
+        select_user_sql = 'SELECT status FROM user WHERE discord_user_id = ?'
+        with conn:
+            cur = conn.cursor()
+            cur.execute(select_user_sql, (author_id,))
+            fetch = cur.fetchone()
+            status = fetch[0] if fetch is not None else None
+            if status is None:
+                return None
+            else:
+                return status
+
+    def _str_truncate(self, string, length, syoryaku='...'):
+        '''
+        文字列を切り詰める
+
+        string: 対象の文字列
+        length: 切り詰め後の長さ
+        syoryaku: 省略したとき表示する文字
+        '''
+        return string[:length] + (syoryaku if string[length:] else '')
