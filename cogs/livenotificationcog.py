@@ -247,24 +247,41 @@ class LiveNotificationCog(commands.Cog):
         # guild_ids=guilds,
         description='登録したライブ通知(YouTube,ニコ生)を確認する',
         options=[
+            manage_commands.create_option(name='disp_all_flag',
+                                        description='配信通知をすべて表示するかどうか(デフォルトはギルドの配信通知のみ)',
+                                        option_type=3,
+                                        required=False,
+                                        choices=[
+                                            manage_commands.create_choice(
+                                            name='すべて表示',
+                                            value='True'),
+                                            manage_commands.create_choice(
+                                            name='コマンドを実行するギルドへ登録した配信通知のみ表示',
+                                            value='False')
+                                        ]),
             manage_commands.create_option(name='reply_is_hidden',
-                                            description='Botの実行結果を全員に見せるどうか',
-                                            option_type=3,
-                                            required=False,
-                                            choices=[
-                                                manage_commands.create_choice(
-                                                name='自分のみ',
-                                                value='True'),
-                                                manage_commands.create_choice(
-                                                name='全員に見せる',
-                                                value='False')
-                                            ])
+                                        description='Botの実行結果を全員に見せるどうか',
+                                        option_type=3,
+                                        required=False,
+                                        choices=[
+                                            manage_commands.create_choice(
+                                            name='自分のみ',
+                                            value='True'),
+                                            manage_commands.create_choice(
+                                            name='全員に見せる',
+                                            value='False')
+                                        ])
         ])
-    async def live_notification_list(self, ctx, reply_is_hidden: str = 'True'):
+    async def live_notification_list(self, ctx, disp_all_flag:str = 'False', reply_is_hidden: str = 'True'):
         LOG.info('live-notificationを確認するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
-        result = self.liveNotification.list_live_notification(ctx.author.id)
+
+        # DMもしくは表示対象をall指定の場合、ギルドフィルタをOFFにする(それ以外はON)
+        disp_all = True if disp_all_flag == 'True' else False
+        guild_id = None if disp_all or ctx.guild is None else ctx.guild.id
+
+        result = self.liveNotification.list_live_notification(ctx.author.id, guild_id)
         # エラーメッセージの場合、str型で返却。それ以外はリスト(辞書型が格納されている)
         if isinstance(result, str):
             await ctx.send(result, hidden = hidden)

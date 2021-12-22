@@ -635,7 +635,7 @@ class LiveNotification:
         self.read()
         self.encode()
 
-    def list_live_notification(self, author_id:int):
+    def list_live_notification(self, author_id:int, guild_id:str=None):
         '''
         登録した配信通知を表示します
         '''
@@ -648,11 +648,14 @@ class LiveNotification:
         elif status == self.STATUS_INVALID:
             return 'あなたの通知状態が無効になっています(何も通知されません)\n`/live-notification-toggle`で有効にできます'
 
+        # guild_idの有無でwhere句に条件を付与(対象ギルドのみにフィルタ)
+        guild_filter = '' if guild_id is None else f'and notification.notification_guild = {guild_id}'
+
         # notification(type,live,userを結合)を取得
         conn.row_factory = sqlite3.Row
         with conn:
             cur = conn.cursor()
-            select_notification_sql = '''
+            select_notification_sql = f'''
                             select notification.id as "id"
                                 , type.name as "name"
                                 , live.title as "title"
@@ -666,6 +669,7 @@ class LiveNotification:
                                 inner join user on notification.user_id = user.id
                                 inner join live on notification.live_id = live.id
                                 where user.discord_user_id = ?
+                                {guild_filter}
                                 order by notification.id, live.id
                             '''
             param = (author_id,)
