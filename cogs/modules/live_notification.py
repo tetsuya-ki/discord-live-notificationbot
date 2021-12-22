@@ -611,7 +611,7 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    return 'ライブ通知の登録に失敗しました(対応していないチャンネルIDです)'
+                    return '配信通知の登録に失敗しました(対応していないチャンネルIDです)'
 
             message = self.set_notification(conn, type_id, user_id, live_id, guild_id, notification_channel_id, mention)
             conn.commit()
