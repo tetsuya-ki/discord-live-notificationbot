@@ -783,4 +783,7 @@ class LiveNotification:
         length: 切り詰め後の長さ
         syoryaku: 省略したとき表示する文字
         '''
-        return string[:length] + (syoryaku if string[length:] else '')
+        if string is None:
+            return '(なし)'
+        else:
+            return string[:length] + (syoryaku if string[length:] else '')
