@@ -313,6 +313,22 @@ class LiveNotification:
             else:
                 return None,None
 
+    def get_channel_name(self, conn, channel_id:str):
+        # 存在をチェック(あるならlive.title,type.nameを返却)
+        select_live_sql = 'SELECT live.title,type.name FROM live INNER JOIN type on type.id = live.type_id WHERE channel_id=:channel_id'
+        with conn:
+            cur = conn.cursor()
+            list = [channel_id]
+            list.append(channel_id.replace('co', ''))
+            for channel in list:
+                cur.execute(select_live_sql, {'channel_id':channel})
+                result = cur.fetchall()
+                LOG.debug(result)
+                if len(result) != 0:
+                    return result[0]
+            else:
+                return None,None
+
     async def set_youtube(self, conn, channel_id:str):
         '''
         YouTubeをセットします
@@ -564,15 +580,18 @@ class LiveNotification:
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
                             ,'started_at': dt_jst_text}]
 
-    def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str):
+    def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str, channel_id:str):
         '''
         通知をセットします(すでに登録された通知の場合、登録しません)
         '''
-        # notificationを検索(live_id+user_idがあれば処理終了)
-        select_notification_sql = 'SELECT id FROM notification WHERE user_id=:user_id and live_id=:live_id'
+        # notificationを検索(live_id+user_id+notification_channelがあれば処理終了)
+        where_notification_channel = 'notification_channel=:notification_channel'
+        if notification_channel is None:
+            where_notification_channel = 'notification_channel is null'
+        select_notification_sql = f'SELECT id FROM notification WHERE user_id=:user_id and live_id=:live_id and {where_notification_channel}'
         with conn:
             cur = conn.cursor()
-            param = {'user_id':user_id, 'live_id':live_id}
+            param = {'user_id':user_id, 'live_id':live_id, 'notification_channel':notification_channel}
             cur.execute(select_notification_sql, param)
             fetch = cur.fetchone()
             notification_id = fetch[0] if fetch is not None else None
@@ -589,7 +608,8 @@ class LiveNotification:
                 get_id_sql = 'SELECT id FROM notification WHERE rowid = last_insert_rowid()'
                 cur.execute(get_id_sql)
                 id = cur.fetchone()[0]
-                message = f'notificationにid:{id}を追加しました'
+                live_title,type_name = self.get_channel_name(conn, channel_id)
+                message = f'notificationにid:{id}を追加しました({live_title}({type_name})のこと)'
                 LOG.debug(message)
                 conn.commit()
             return message
@@ -613,7 +633,7 @@ class LiveNotification:
                     self.encode()
                     return '配信通知の登録に失敗しました(対応していないチャンネルIDです)'
 
-            message = self.set_notification(conn, type_id, user_id, live_id, guild_id, notification_channel_id, mention)
+            message = self.set_notification(conn, type_id, user_id, live_id, guild_id, notification_channel_id, mention, channel_id)
             conn.commit()
             self.read()
         self.encode()
@@ -734,9 +754,9 @@ class LiveNotification:
             return message
         return message
 
-    async def delete_live_notification(self, author_id:int, channel_id:str):
+    async def delete_live_notification(self, author_id:int, channel_id:str, notification_channel_id:int=None):
         '''
-        配信通知を削除
+        配信通知を削除(notification_channel_idがない場合はwhere句から削除。0以下の場合はDM扱いでwhere句追加)
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -746,8 +766,19 @@ class LiveNotification:
             return f'{channel_id}は配信通知に存在しません(正しいチャンネルIDを指定ください)'
         with conn:
             cur = conn.cursor()
-            delete_sql = 'DELETE FROM notification WHERE user_id = ? and live_id = ?'
-            cur.execute(delete_sql, (user_id, live_id))
+            where_notification_channel_id,discord_channel = '',''
+            delete_param = (user_id, live_id)
+            if notification_channel_id is not None:
+                if notification_channel_id > 0:
+                    where_notification_channel_id = 'and notification_channel = ?'
+                    delete_param = (user_id, live_id, notification_channel_id)
+                    discord_channel = f'通知先: <#{notification_channel_id}> の'
+                else:
+                    where_notification_channel_id = 'and notification_channel is null'
+                    discord_channel = '通知先: **DM**の'
+            delete_sql = f'DELETE FROM notification WHERE user_id = ? and live_id = ? {where_notification_channel_id}'
+            cur.execute(delete_sql, delete_param)
+            live_title,type_name = self.get_channel_name(conn, channel_id)
         conn.commit()
         self.read()
         self.encode()
@@ -758,7 +789,7 @@ class LiveNotification:
             message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
             LOG.error(message)
             return message
-        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id})を削除しました)'
+        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと。なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
 
     def _check_user_status(self, conn, author_id:int):
         '''

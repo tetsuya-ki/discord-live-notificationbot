@@ -339,6 +339,10 @@ class LiveNotificationCog(commands.Cog):
                                         description='YouTubeかニコ生のチャンネルID',
                                         option_type=3,
                                         required=True),
+            manage_commands.create_option(name='notification_chanel',
+                                        description='削除対象の通知先チャンネル(#general等。「DM」でBotとのDMが削除対象。未指定の場合は通知先チャンネル関わらず削除)',
+                                        option_type=3,
+                                        required=False),
             manage_commands.create_option(name='reply_is_hidden',
                                         description='Botの実行結果を全員に見せるどうか',
                                         option_type=3,
@@ -352,11 +356,36 @@ class LiveNotificationCog(commands.Cog):
                                             value='False')
                                         ])
         ])
-    async def live_notification_delete(self, ctx, live_channel_id:str, reply_is_hidden: str = 'True'):
+    async def live_notification_delete(self, ctx, live_channel_id:str, notification_chanel:str=None, reply_is_hidden:str='True'):
         LOG.info('live-notificationを削除するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
-        msg = await self.liveNotification.delete_live_notification(ctx.author.id, live_channel_id)
+
+        # ギルドの設定
+        if ctx.guild is None:
+            if notification_chanel is not None and notification_chanel.upper() != 'DM':
+                msg = 'DMで削除対象の通知先チャンネル指定はできません。チャンネルは未指定か「DM」で配信通知を削除してください。'
+                await ctx.send(msg, hidden = True)
+                LOG.info(msg)
+                return
+        # チャンネルの設定
+        channel_id = None
+        if notification_chanel is not None:
+            temp_channel = discord.utils.get(ctx.guild.text_channels, name=notification_chanel)
+            if notification_chanel.upper() == 'DM': # DMの場合
+                channel_id = -1 # DMと未指定を区別するため、-1として設定しておく
+            elif temp_channel is None: # 名称で検索できない場合、#xxxxx形式として調査
+                temp_channel_id = re.sub(r'[<#>]', '', notification_chanel)
+                if temp_channel_id.isdecimal() and '#' in notification_chanel:
+                    channel_id = int(temp_channel_id)
+                else:
+                    msg = '削除対象の通知先チャンネル名が不正です。もう一度、適切な名前で指定してください(#チャンネル名でもOK)。'
+                    await ctx.send(msg, hidden = True)
+                    LOG.info(msg)
+                    return
+            else: # 通知先チャンネルに名称が指定され、取得できた場合
+                channel_id = temp_channel.id
+        msg = await self.liveNotification.delete_live_notification(ctx.author.id, live_channel_id, channel_id)
         await ctx.send(msg, hidden = hidden)
 
     def check_printer_is_running(self):
