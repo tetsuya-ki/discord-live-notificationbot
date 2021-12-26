@@ -297,11 +297,9 @@ class LiveNotificationCog(commands.Cog):
                             )
             for result_dict in result:
                 message_row = f'''
-                                種類: {result_dict.get('type')}, 
-                                配信者: {result_dict.get('title')}, 
-                                チャンネルID: {result_dict.get('channel_id')},
-                                通知先: {result_dict.get('channel')}, 
-                                最新動画ID: {result_dict.get('recent_id')}, 
+                                種類: {result_dict.get('type')} 配信者: {result_dict.get('title')}
+                                チャンネルID: {result_dict.get('channel_id')} 最新動画ID: {result_dict.get('recent_id')}
+                                通知先: {result_dict.get('channel')}
                                 更新日時: {result_dict.get('updated_at')}
                                 '''
                 embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
