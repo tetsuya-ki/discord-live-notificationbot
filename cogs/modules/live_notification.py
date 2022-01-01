@@ -339,8 +339,8 @@ class LiveNotification:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
                     title = response[3].text if len(response) > 3 and response[3] is not None else None
-                    recent_id = response[7][1].text if len(response) > 8 and response[7] is not None else None
-                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+                    recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
                 else:
                     return None,None
         # データ登録
@@ -374,8 +374,8 @@ class LiveNotification:
             async with session.get(self.YOUTUBE_URL+channel_id) as r:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
-                    youtube_recent_id = response[7][1].text if len(response) > 8 and response[8] is not None else None
-                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+                    youtube_recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
 
                     # 謎の削除かチェック
                     recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
