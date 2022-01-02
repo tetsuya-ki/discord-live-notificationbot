@@ -20,6 +20,7 @@ class LiveNotificationCog(commands.Cog):
         self.bot = bot
         self.liveNotification = LiveNotification(bot)
         self.JST = timezone(timedelta(hours=+9), 'JST')
+        self.FILTERWORD_MAX_SIZE = 1500
 
     # 読み込まれた時の処理
     @commands.Cog.listener()
@@ -387,6 +388,38 @@ class LiveNotificationCog(commands.Cog):
                 channel_id = temp_channel.id
         msg = await self.liveNotification.delete_live_notification(ctx.author.id, live_channel_id, channel_id)
         await ctx.send(msg, hidden = hidden)
+
+    @cog_ext.cog_slash(
+    name='live-notification_set-filterword',
+    # guild_ids=guilds,
+    description='通知対象外とする文字列をコンマ区切りで指定する(未指定だと現在のフィルターワードを表示)',
+    options=[
+        manage_commands.create_option(name='filterword',
+                                    description='通知対象外とする文字列をコンマ区切りで指定(すべて削除は「,」のみ指定)',
+                                    option_type=3,
+                                    required=False),
+        manage_commands.create_option(name='reply_is_hidden',
+                                    description='Botの実行結果を全員に見せるどうか',
+                                    option_type=3,
+                                    required=False,
+                                    choices=[
+                                        manage_commands.create_choice(
+                                        name='自分のみ',
+                                        value='True'),
+                                        manage_commands.create_choice(
+                                        name='全員に見せる',
+                                        value='False')
+                                    ])
+    ])
+    async def live_notification_set_filterword(self, ctx, filterword:str = '', reply_is_hidden: str = 'True'):
+        LOG.info('filterwordを設定するぜ！')
+        self.check_printer_is_running()
+        hidden = True if reply_is_hidden == 'True' else False
+        if len(filterword) > self.FILTERWORD_MAX_SIZE:
+            await ctx.send(f'filterwordは{self.FILTERWORD_MAX_SIZE}字以下で設定してください({len(filterword)}字設定しようとしています)', hidden = True) 
+            return
+        result = await self.liveNotification.set_filterword(ctx.author.id, filterword)
+        await ctx.send(result, hidden = hidden)
 
     def check_printer_is_running(self):
         if not self.printer.is_running():
