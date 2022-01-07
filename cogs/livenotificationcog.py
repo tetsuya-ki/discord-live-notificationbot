@@ -95,15 +95,8 @@ class LiveNotificationCog(commands.Cog):
 
                             # DMの処理(notification_guild, notification_channelがNoneならDM扱い)
                             if notification['notification_guild'] is None and notification['notification_channel'] is None:
-                                discord_user_id = notification['discord_user_id']
-                                notification_user = self.bot.get_user(discord_user_id)
-                                text = notification_user or ''
-                                LOG.debug('user id :' + str(discord_user_id) + ', user:'+ text)
-                                if notification_user is None:
-                                    notification_user = await self.bot.fetch_user(discord_user_id)
-                                    text = notification_user or ''
-                                channel = await notification_user.create_dm()
-                                await channel.send(f'{mention} {message}', embed=embed)
+                                dm = await self.create_dm(notification['discord_user_id'])
+                                await dm.send(f'{mention} {message}', embed=embed)
                             else:
                                 channel = discord.utils.get(self.bot.get_all_channels(),
                                                             guild__id=notification['notification_guild'],
@@ -396,6 +389,15 @@ class LiveNotificationCog(commands.Cog):
             return msg
         else:
             return 'Taskは問題なく起動しています。'
+
+    async def create_dm(self, discord_user_id:int):
+        notification_user = self.bot.get_user(discord_user_id)
+        text = notification_user or ''
+        if notification_user is None:
+            notification_user = await self.bot.fetch_user(discord_user_id)
+            text = notification_user or ''
+        LOG.debug(f'user id :{discord_user_id}, user:{text}')
+        return await notification_user.create_dm()
 
     @commands.Cog.listener()
     async def on_slash_command_error(self, ctx, ex):
