@@ -108,8 +108,15 @@ class LiveNotificationCog(commands.Cog):
                                         msg = f'''＊＊＊{notification['notification_guild']}のチャンネルへの投稿に失敗しました！＊＊＊'''
                                         LOG.error(msg)
                                         try:
+                                            # Bot管理者にお知らせ
+                                            guild = await self.bot.fetch_guild(notification['notification_guild'])
+                                            alert_message = f'''notification_id: {notification['id']}の通知先「{guild.name}/{channel.name}」は権限不足などの原因で通知できませんでした({notification['name']} - {live['title']})\n動画名: {video_title}\nURL: {watch_url}\n通知先のチャンネルの権限見直しをお願いします。'''
                                             get_control_channel = discord.utils.get(self.bot.get_all_channels(),guild__id=self.liveNotification.saved_dm_guild,name=self.liveNotification.LIVE_CONTROL_CHANNEL)
-                                            await get_control_channel.send(f'''No.{notification['id']}の{notification['notification_guild']}/{channel.name}は権限不足などの原因で通知できませんでした({notification['name']} - {live['title']})''')
+                                            await get_control_channel.send(alert_message)
+
+                                            # 利用者にお知らせ
+                                            dm = await self.create_dm(notification['discord_user_id'])
+                                            await dm.send(alert_message)
                                         except:
                                             msg = f'＊＊＊さらに、{self.liveNotification.saved_dm_guild}のチャンネル({self.liveNotification.LIVE_CONTROL_CHANNEL})への投稿に失敗しました！＊＊＊'
                                             LOG.error(msg)
