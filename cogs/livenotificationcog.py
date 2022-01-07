@@ -56,7 +56,7 @@ class LiveNotificationCog(commands.Cog):
                             video_title = result_dict.get('title')
                             watch_url = result_dict.get('watch_url')
                             if result_dict.get('live_streaming_start_flg') is None:
-                                message = f'''{notification['name']}で{live['title']}さん{message_suffix}'''
+                                message = f'''{notification['name']}で{live['title']}さん{message_suffix}\n動画名: {video_title}'''
                             elif result_dict.get('live_streaming_start_flg') is True:
                                 # YouTubeで予約配信していたものが配信開始された場合を想定
                                 message = f'''{notification['name']}で{live['title']}さんの配信が開始されました(おそらく)！'''
