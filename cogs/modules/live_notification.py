@@ -297,6 +297,17 @@ class LiveNotification:
                 conn.commit()
             return user_id
 
+    def get_user_filterword(self, conn, author_id):
+        select_user_filterword_sql = 'SELECT filter_words FROM user WHERE discord_user_id = ?'
+        with conn:
+            cur = conn.cursor()
+            cur.execute(select_user_filterword_sql, (author_id,))
+            fetch = cur.fetchone()
+            if fetch is not None and len(fetch) > 0 and fetch[0] is not None:
+                return fetch[0]
+            else:
+                return ''
+
     def get_channel_id(self, conn, channel_id:str):
         # 存在をチェック(あるならlive.idを返却)
         select_live_sql = 'SELECT id,type_id FROM live WHERE channel_id=:channel_id'
@@ -339,8 +350,8 @@ class LiveNotification:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
                     title = response[3].text if len(response) > 3 and response[3] is not None else None
-                    recent_id = response[7][1].text if len(response) > 8 and response[7] is not None else None
-                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+                    recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
                 else:
                     return None,None
         # データ登録
@@ -374,8 +385,8 @@ class LiveNotification:
             async with session.get(self.YOUTUBE_URL+channel_id) as r:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
-                    youtube_recent_id = response[7][1].text if len(response) > 8 and response[8] is not None else None
-                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+                    youtube_recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
 
                     # 謎の削除かチェック
                     recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
@@ -790,6 +801,35 @@ class LiveNotification:
             LOG.error(message)
             return message
         return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと。なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
+
+    async def set_filterword(self, author_id:int, filterword:str):
+        '''
+        フィルターワードを設定
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+
+        # 空文字が来た場合、現在のフィルターワードを返却する
+        if filterword == '':
+            db_filterword = self.get_user_filterword(conn, author_id)
+            return f'現在のfilterwordは「{db_filterword}」です'
+        user_id = self.get_user(conn, author_id)
+        with conn:
+            cur = conn.cursor()
+            update_param = (filterword, user_id)
+            update_sql = f'UPDATE user SET filter_words=? WHERE id = ?'
+            cur.execute(update_sql, update_param)
+        conn.commit()
+        self.read()
+        self.encode() 
+        # Herokuの時のみ、チャンネルにファイルを添付する
+        try:
+            await self.set_discord_attachment_file()
+        except discord.errors.Forbidden:
+            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+            LOG.error(message)
+            return message
+        return f'filterword(author_id: {author_id}, user_id:{user_id}, filterword:{filterword})を設定しました'
 
     def _check_user_status(self, conn, author_id:int):
         '''
