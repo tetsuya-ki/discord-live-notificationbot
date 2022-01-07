@@ -9,7 +9,7 @@ from pytube import YouTube
 from .aes_angou import Aes_angou
 from . import setting
 
-import datetime, discord, sqlite3, os, pytube
+import datetime, discord, sqlite3, os, pytube, re
 LOG = getLogger('live-notification-bot')
 
 class LiveNotification:
@@ -425,6 +425,15 @@ class LiveNotification:
                     # 新しく予約配信が追加されたパターン
                     elif youtube_recent_length == 0:
                         live_streaming_start_flg = False
+                        live_streaming_start_datetime = ''
+                        async with aiohttp.ClientSession() as session:
+                            headers={"accept-language": "ja-JP"}
+                            async with session.get(youtube_recent_url, headers=headers) as r:
+                                if r.status == 200:
+                                    html = await r.text()
+                                    match_object = re.search(r'subtitleText":{"simpleText":"(.+?) GMT[+-]\d+(:\d+)?"}', html)
+                                    if match_object is not None and len(match_object.groups()) >= 1:
+                                        live_streaming_start_datetime = match_object.group(1)
 
                     response_list = []
                     for entry in response[7:]:
@@ -465,6 +474,8 @@ class LiveNotification:
                     if len(response_list) > 0:
                         first_dict = response_list.pop(0)
                         first_dict['live_streaming_start_flg'] = live_streaming_start_flg
+                        if live_streaming_start_flg is False:
+                            first_dict['live_streaming_start_datetime'] = live_streaming_start_datetime
                         response_list.insert(0, first_dict)
                     # recent_idの更新処理
                     self.decode()

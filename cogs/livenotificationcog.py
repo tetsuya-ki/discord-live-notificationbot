@@ -64,6 +64,8 @@ class LiveNotificationCog(commands.Cog):
                             elif result_dict.get('live_streaming_start_flg') is False:
                                 # YouTubeで予約配信が追加された場合を想定
                                 message = f'''{notification['name']}で{live['title']}さんの予約配信が追加されました！\n動画名: {video_title}'''
+                                if result_dict.get('live_streaming_start_datetime') is not None:
+                                    message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
                             description = f'''{result_dict.get('description')} by {live['title']}'''
 
                             # フィルター処理
