@@ -20,6 +20,7 @@ class LiveNotificationCog(commands.Cog):
         self.bot = bot
         self.liveNotification = LiveNotification(bot)
         self.JST = timezone(timedelta(hours=+9), 'JST')
+        self.FILTERWORD_MAX_SIZE = 1500
 
     # 読み込まれた時の処理
     @commands.Cog.listener()
@@ -56,13 +57,15 @@ class LiveNotificationCog(commands.Cog):
                             video_title = result_dict.get('title')
                             watch_url = result_dict.get('watch_url')
                             if result_dict.get('live_streaming_start_flg') is None:
-                                message = f'''{notification['name']}で{live['title']}さん{message_suffix}'''
+                                message = f'''{notification['name']}で{live['title']}さん{message_suffix}\n動画名: {video_title}'''
                             elif result_dict.get('live_streaming_start_flg') is True:
                                 # YouTubeで予約配信していたものが配信開始された場合を想定
-                                message = f'''{notification['name']}で{live['title']}さんの配信が開始されました(おそらく)！'''
+                                message = f'''{notification['name']}で{live['title']}さんの配信が開始されました(おそらく)！\n動画名: {video_title}'''
                             elif result_dict.get('live_streaming_start_flg') is False:
                                 # YouTubeで予約配信が追加された場合を想定
-                                message = f'''{notification['name']}で{live['title']}さんの予約配信が追加されました！'''
+                                message = f'''{notification['name']}で{live['title']}さんの予約配信が追加されました！\n動画名: {video_title}'''
+                                if result_dict.get('live_streaming_start_datetime') is not None:
+                                    message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
                             description = f'''{result_dict.get('description')} by {live['title']}'''
 
                             # フィルター処理
@@ -95,15 +98,8 @@ class LiveNotificationCog(commands.Cog):
 
                             # DMの処理(notification_guild, notification_channelがNoneならDM扱い)
                             if notification['notification_guild'] is None and notification['notification_channel'] is None:
-                                discord_user_id = notification['discord_user_id']
-                                notification_user = self.bot.get_user(discord_user_id)
-                                text = notification_user or ''
-                                LOG.debug('user id :' + str(discord_user_id) + ', user:'+ text)
-                                if notification_user is None:
-                                    notification_user = await self.bot.fetch_user(discord_user_id)
-                                    text = notification_user or ''
-                                channel = await notification_user.create_dm()
-                                await channel.send(f'{mention} {message}', embed=embed)
+                                dm = await self.create_dm(notification['discord_user_id'])
+                                await dm.send(f'{mention} {message}', embed=embed)
                             else:
                                 channel = discord.utils.get(self.bot.get_all_channels(),
                                                             guild__id=notification['notification_guild'],
@@ -115,8 +111,15 @@ class LiveNotificationCog(commands.Cog):
                                         msg = f'''＊＊＊{notification['notification_guild']}のチャンネルへの投稿に失敗しました！＊＊＊'''
                                         LOG.error(msg)
                                         try:
+                                            # Bot管理者にお知らせ
+                                            guild = await self.bot.fetch_guild(notification['notification_guild'])
+                                            alert_message = f'''notification_id: {notification['id']}の通知先「{guild.name}/{channel.name}」は権限不足などの原因で通知できませんでした({notification['name']} - {live['title']})\n動画名: {video_title}\nURL: {watch_url}\n通知先のチャンネルの権限見直しをお願いします。'''
                                             get_control_channel = discord.utils.get(self.bot.get_all_channels(),guild__id=self.liveNotification.saved_dm_guild,name=self.liveNotification.LIVE_CONTROL_CHANNEL)
-                                            await get_control_channel.send(f'''No.{notification['id']}の{notification['notification_guild']}/{channel.name}は権限不足などの原因で通知できませんでした({notification['name']} - {live['title']})''')
+                                            await get_control_channel.send(alert_message)
+
+                                            # 利用者にお知らせ
+                                            dm = await self.create_dm(notification['discord_user_id'])
+                                            await dm.send(alert_message)
                                         except:
                                             msg = f'＊＊＊さらに、{self.liveNotification.saved_dm_guild}のチャンネル({self.liveNotification.LIVE_CONTROL_CHANNEL})への投稿に失敗しました！＊＊＊'
                                             LOG.error(msg)
@@ -126,7 +129,7 @@ class LiveNotificationCog(commands.Cog):
     @cog_ext.cog_slash(
         name='live-notification_add',
         # guild_ids=guilds,
-        description='ライブ通知(YouTube,ニコ生)を作成する',
+        description='配信通知(YouTube,ニコ生)を作成する',
         options=[
             manage_commands.create_option(name='live_channel_id',
                                         description='YouTubeかニコ生のチャンネルID(＊非公開のニコ生コミュニティは登録失敗します)',
@@ -245,32 +248,49 @@ class LiveNotificationCog(commands.Cog):
     @cog_ext.cog_slash(
         name='live-notification_list',
         # guild_ids=guilds,
-        description='登録したライブ通知(YouTube,ニコ生)を確認する',
+        description='登録した配信通知(YouTube,ニコ生)を確認する',
         options=[
+            manage_commands.create_option(name='disp_all_flag',
+                                        description='配信通知をすべて表示するかどうか(デフォルトはギルドの配信通知のみ)',
+                                        option_type=3,
+                                        required=False,
+                                        choices=[
+                                            manage_commands.create_choice(
+                                            name='すべて表示',
+                                            value='True'),
+                                            manage_commands.create_choice(
+                                            name='コマンドを実行するギルドへ登録した配信通知のみ表示',
+                                            value='False')
+                                        ]),
             manage_commands.create_option(name='reply_is_hidden',
-                                            description='Botの実行結果を全員に見せるどうか',
-                                            option_type=3,
-                                            required=False,
-                                            choices=[
-                                                manage_commands.create_choice(
-                                                name='自分のみ',
-                                                value='True'),
-                                                manage_commands.create_choice(
-                                                name='全員に見せる',
-                                                value='False')
-                                            ])
+                                        description='Botの実行結果を全員に見せるどうか',
+                                        option_type=3,
+                                        required=False,
+                                        choices=[
+                                            manage_commands.create_choice(
+                                            name='自分のみ',
+                                            value='True'),
+                                            manage_commands.create_choice(
+                                            name='全員に見せる',
+                                            value='False')
+                                        ])
         ])
-    async def live_notification_list(self, ctx, reply_is_hidden: str = 'True'):
+    async def live_notification_list(self, ctx, disp_all_flag:str = 'False', reply_is_hidden: str = 'True'):
         LOG.info('live-notificationを確認するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
-        result = self.liveNotification.list_live_notification(ctx.author.id)
+
+        # DMもしくは表示対象をall指定の場合、ギルドフィルタをOFFにする(それ以外はON)
+        disp_all = True if disp_all_flag == 'True' else False
+        guild_id = None if disp_all or ctx.guild is None else ctx.guild.id
+
+        result = self.liveNotification.list_live_notification(ctx.author.id, guild_id)
         # エラーメッセージの場合、str型で返却。それ以外はリスト(辞書型が格納されている)
         if isinstance(result, str):
             await ctx.send(result, hidden = hidden)
         else:
             embed = discord.Embed(
-                            title='ライブ通知(YouTube,ニコ生)のリスト',
+                            title='配信通知(YouTube,ニコ生)のリスト',
                             color=0x000000,
                             # description=description,
                             )
@@ -280,20 +300,18 @@ class LiveNotificationCog(commands.Cog):
                             )
             for result_dict in result:
                 message_row = f'''
-                                種類: {result_dict.get('type')}, 
-                                配信者: {result_dict.get('title')}, 
-                                チャンネルID: {result_dict.get('channel_id')},
-                                通知先: {result_dict.get('channel')}, 
-                                最新動画ID: {result_dict.get('recent_id')}, 
+                                種類: {result_dict.get('type')} 配信者: {result_dict.get('title')}
+                                チャンネルID: {result_dict.get('channel_id')} 最新動画ID: {result_dict.get('recent_id')}
+                                通知先: {result_dict.get('channel')}
                                 更新日時: {result_dict.get('updated_at')}
                                 '''
                 embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
-            await ctx.send('あなたの登録したライブ通知はコチラです', embed=embed, hidden = hidden)
+            await ctx.send('あなたの登録した配信通知はコチラです', embed=embed, hidden = hidden)
 
     @cog_ext.cog_slash(
         name='live-notification_toggle',
         # guild_ids=guilds,
-        description='ライブ通知のON/OFFを切り替えます(OFFの場合、通知されません)',
+        description='配信通知のON/OFFを切り替えます(OFFの場合、通知されません)',
         options=[
             manage_commands.create_option(name='reply_is_hidden',
                                             description='Botの実行結果を全員に見せるどうか',
@@ -318,12 +336,16 @@ class LiveNotificationCog(commands.Cog):
     @cog_ext.cog_slash(
         name='live-notification_delete',
         # guild_ids=guilds,
-        description='ライブ通知(YouTube,ニコ生)を削除する',
+        description='配信通知(YouTube,ニコ生)を削除する',
         options=[
             manage_commands.create_option(name='live_channel_id',
                                         description='YouTubeかニコ生のチャンネルID',
                                         option_type=3,
                                         required=True),
+            manage_commands.create_option(name='notification_chanel',
+                                        description='削除対象の通知先チャンネル(#general等。「DM」でBotとのDMが削除対象。未指定の場合は通知先チャンネル関わらず削除)',
+                                        option_type=3,
+                                        required=False),
             manage_commands.create_option(name='reply_is_hidden',
                                         description='Botの実行結果を全員に見せるどうか',
                                         option_type=3,
@@ -337,12 +359,69 @@ class LiveNotificationCog(commands.Cog):
                                             value='False')
                                         ])
         ])
-    async def live_notification_delete(self, ctx, live_channel_id:str, reply_is_hidden: str = 'True'):
+    async def live_notification_delete(self, ctx, live_channel_id:str, notification_chanel:str=None, reply_is_hidden:str='True'):
         LOG.info('live-notificationを削除するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
-        msg = await self.liveNotification.delete_live_notification(ctx.author.id, live_channel_id)
+
+        # ギルドの設定
+        if ctx.guild is None:
+            if notification_chanel is not None and notification_chanel.upper() != 'DM':
+                msg = 'DMで削除対象の通知先チャンネル指定はできません。チャンネルは未指定か「DM」で配信通知を削除してください。'
+                await ctx.send(msg, hidden = True)
+                LOG.info(msg)
+                return
+        # チャンネルの設定
+        channel_id = None
+        if notification_chanel is not None:
+            temp_channel = discord.utils.get(ctx.guild.text_channels, name=notification_chanel)
+            if notification_chanel.upper() == 'DM': # DMの場合
+                channel_id = -1 # DMと未指定を区別するため、-1として設定しておく
+            elif temp_channel is None: # 名称で検索できない場合、#xxxxx形式として調査
+                temp_channel_id = re.sub(r'[<#>]', '', notification_chanel)
+                if temp_channel_id.isdecimal() and '#' in notification_chanel:
+                    channel_id = int(temp_channel_id)
+                else:
+                    msg = '削除対象の通知先チャンネル名が不正です。もう一度、適切な名前で指定してください(#チャンネル名でもOK)。'
+                    await ctx.send(msg, hidden = True)
+                    LOG.info(msg)
+                    return
+            else: # 通知先チャンネルに名称が指定され、取得できた場合
+                channel_id = temp_channel.id
+        msg = await self.liveNotification.delete_live_notification(ctx.author.id, live_channel_id, channel_id)
         await ctx.send(msg, hidden = hidden)
+
+    @cog_ext.cog_slash(
+    name='live-notification_set-filterword',
+    # guild_ids=guilds,
+    description='通知対象外とする文字列をコンマ区切りで指定する(未指定だと現在のフィルターワードを表示)',
+    options=[
+        manage_commands.create_option(name='filterword',
+                                    description='通知対象外とする文字列をコンマ区切りで指定(すべて削除は「,」のみ指定)',
+                                    option_type=3,
+                                    required=False),
+        manage_commands.create_option(name='reply_is_hidden',
+                                    description='Botの実行結果を全員に見せるどうか',
+                                    option_type=3,
+                                    required=False,
+                                    choices=[
+                                        manage_commands.create_choice(
+                                        name='自分のみ',
+                                        value='True'),
+                                        manage_commands.create_choice(
+                                        name='全員に見せる',
+                                        value='False')
+                                    ])
+    ])
+    async def live_notification_set_filterword(self, ctx, filterword:str = '', reply_is_hidden: str = 'True'):
+        LOG.info('filterwordを設定するぜ！')
+        self.check_printer_is_running()
+        hidden = True if reply_is_hidden == 'True' else False
+        if len(filterword) > self.FILTERWORD_MAX_SIZE:
+            await ctx.send(f'filterwordは{self.FILTERWORD_MAX_SIZE}字以下で設定してください({len(filterword)}字設定しようとしています)', hidden = True) 
+            return
+        result = await self.liveNotification.set_filterword(ctx.author.id, filterword)
+        await ctx.send(result, hidden = hidden)
 
     def check_printer_is_running(self):
         if not self.printer.is_running():
@@ -352,6 +431,15 @@ class LiveNotificationCog(commands.Cog):
             return msg
         else:
             return 'Taskは問題なく起動しています。'
+
+    async def create_dm(self, discord_user_id:int):
+        notification_user = self.bot.get_user(discord_user_id)
+        text = notification_user or ''
+        if notification_user is None:
+            notification_user = await self.bot.fetch_user(discord_user_id)
+            text = notification_user or ''
+        LOG.debug(f'user id :{discord_user_id}, user:{text}')
+        return await notification_user.create_dm()
 
     @commands.Cog.listener()
     async def on_slash_command_error(self, ctx, ex):

@@ -9,7 +9,7 @@ from pytube import YouTube
 from .aes_angou import Aes_angou
 from . import setting
 
-import datetime, discord, sqlite3, os, pytube
+import datetime, discord, sqlite3, os, pytube, re
 LOG = getLogger('live-notification-bot')
 
 class LiveNotification:
@@ -26,6 +26,7 @@ class LiveNotification:
     NOTIFICATION_MAX = 5
     STATUS_VALID = 'VALID'
     STATUS_INVALID = 'INVALID'
+    DESCRIPTION_LENGTH = 2000
 
     def __init__(self, bot):
         self.bot = bot
@@ -296,9 +297,36 @@ class LiveNotification:
                 conn.commit()
             return user_id
 
+    def get_user_filterword(self, conn, author_id):
+        select_user_filterword_sql = 'SELECT filter_words FROM user WHERE discord_user_id = ?'
+        with conn:
+            cur = conn.cursor()
+            cur.execute(select_user_filterword_sql, (author_id,))
+            fetch = cur.fetchone()
+            if fetch is not None and len(fetch) > 0 and fetch[0] is not None:
+                return fetch[0]
+            else:
+                return ''
+
     def get_channel_id(self, conn, channel_id:str):
         # 存在をチェック(あるならlive.idを返却)
         select_live_sql = 'SELECT id,type_id FROM live WHERE channel_id=:channel_id'
+        with conn:
+            cur = conn.cursor()
+            list = [channel_id]
+            list.append(channel_id.replace('co', ''))
+            for channel in list:
+                cur.execute(select_live_sql, {'channel_id':channel})
+                result = cur.fetchall()
+                LOG.debug(result)
+                if len(result) != 0:
+                    return result[0]
+            else:
+                return None,None
+
+    def get_channel_name(self, conn, channel_id:str):
+        # 存在をチェック(あるならlive.title,type.nameを返却)
+        select_live_sql = 'SELECT live.title,type.name FROM live INNER JOIN type on type.id = live.type_id WHERE channel_id=:channel_id'
         with conn:
             cur = conn.cursor()
             list = [channel_id]
@@ -322,8 +350,8 @@ class LiveNotification:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
                     title = response[3].text if len(response) > 3 and response[3] is not None else None
-                    recent_id = response[7][1].text if len(response) > 8 and response[7] is not None else None
-                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+                    recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
                 else:
                     return None,None
         # データ登録
@@ -357,8 +385,8 @@ class LiveNotification:
             async with session.get(self.YOUTUBE_URL+channel_id) as r:
                 if r.status == 200:
                     response = ET.fromstring(await r.text())
-                    youtube_recent_id = response[7][1].text if len(response) > 8 and response[8] is not None else None
-                    youtube_recent_url = response[7][4].attrib['href'] if response[7][4] is not None else ''
+                    youtube_recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
+                    youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
 
                     # 謎の削除かチェック
                     recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
@@ -397,6 +425,15 @@ class LiveNotification:
                     # 新しく予約配信が追加されたパターン
                     elif youtube_recent_length == 0:
                         live_streaming_start_flg = False
+                        live_streaming_start_datetime = ''
+                        async with aiohttp.ClientSession() as session:
+                            headers={"accept-language": "ja-JP"}
+                            async with session.get(youtube_recent_url, headers=headers) as r:
+                                if r.status == 200:
+                                    html = await r.text()
+                                    match_object = re.search(r'subtitleText":{"simpleText":"(.+?) GMT[+-]\d+(:\d+)?"}', html)
+                                    if match_object is not None and len(match_object.groups()) >= 1:
+                                        live_streaming_start_datetime = match_object.group(1)
 
                     response_list = []
                     for entry in response[7:]:
@@ -418,7 +455,9 @@ class LiveNotification:
                         description = ''
                         if media_group is not None:
                             thumbnail = media_group[2].attrib['url'] if media_group[2] is not None else ''
-                            description = media_group[3].text if media_group[3] is not None else ''
+                            media_group_3 = media_group[3].text if media_group[3] is not None else ''
+                            description = self._str_truncate(media_group_3, self.DESCRIPTION_LENGTH, '(以下省略)')
+
                         # 前回と同じならメッセージを変更しておく
                         raw_description = description
                         if len(response_list) != 0 and response_list[-1].get('raw_description') == description:
@@ -435,6 +474,8 @@ class LiveNotification:
                     if len(response_list) > 0:
                         first_dict = response_list.pop(0)
                         first_dict['live_streaming_start_flg'] = live_streaming_start_flg
+                        if live_streaming_start_flg is False:
+                            first_dict['live_streaming_start_datetime'] = live_streaming_start_datetime
                         response_list.insert(0, first_dict)
                     # recent_idの更新処理
                     self.decode()
@@ -551,21 +592,28 @@ class LiveNotification:
                     nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
                     dt_started_jst = datetime.datetime.fromisoformat(nico_started_at)
                     dt_jst_text = dt_started_jst.strftime(self.DATETIME_FORMAT)
+
+                    # 説明文の文字数削減
+                    description = self._str_truncate(nico_live_response['data']['live']['description'], self.DESCRIPTION_LENGTH, '(以下省略)')
+
                     # 通知対象として返却
                     return [{'title': str(nico_live_response['data']['live']['title'])
-                            ,'description': str(nico_live_response['data']['live']['description'])
+                            ,'description': str(description)
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
                             ,'started_at': dt_jst_text}]
 
-    def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str):
+    def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str, channel_id:str):
         '''
         通知をセットします(すでに登録された通知の場合、登録しません)
         '''
-        # notificationを検索(live_id+user_idがあれば処理終了)
-        select_notification_sql = 'SELECT id FROM notification WHERE user_id=:user_id and live_id=:live_id'
+        # notificationを検索(live_id+user_id+notification_channelがあれば処理終了)
+        where_notification_channel = 'notification_channel=:notification_channel'
+        if notification_channel is None:
+            where_notification_channel = 'notification_channel is null'
+        select_notification_sql = f'SELECT id FROM notification WHERE user_id=:user_id and live_id=:live_id and {where_notification_channel}'
         with conn:
             cur = conn.cursor()
-            param = {'user_id':user_id, 'live_id':live_id}
+            param = {'user_id':user_id, 'live_id':live_id, 'notification_channel':notification_channel}
             cur.execute(select_notification_sql, param)
             fetch = cur.fetchone()
             notification_id = fetch[0] if fetch is not None else None
@@ -582,7 +630,8 @@ class LiveNotification:
                 get_id_sql = 'SELECT id FROM notification WHERE rowid = last_insert_rowid()'
                 cur.execute(get_id_sql)
                 id = cur.fetchone()[0]
-                message = f'notificationにid:{id}を追加しました'
+                live_title,type_name = self.get_channel_name(conn, channel_id)
+                message = f'notificationにid:{id}を追加しました({live_title}({type_name})のこと)'
                 LOG.debug(message)
                 conn.commit()
             return message
@@ -604,9 +653,9 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    return 'ライブ通知の登録に失敗しました(対応していないチャンネルIDです)'
+                    return '配信通知の登録に失敗しました(対応していないチャンネルIDです)'
 
-            message = self.set_notification(conn, type_id, user_id, live_id, guild_id, notification_channel_id, mention)
+            message = self.set_notification(conn, type_id, user_id, live_id, guild_id, notification_channel_id, mention, channel_id)
             conn.commit()
             self.read()
         self.encode()
@@ -628,7 +677,7 @@ class LiveNotification:
         self.read()
         self.encode()
 
-    def list_live_notification(self, author_id:int):
+    def list_live_notification(self, author_id:int, guild_id:str=None):
         '''
         登録した配信通知を表示します
         '''
@@ -641,11 +690,14 @@ class LiveNotification:
         elif status == self.STATUS_INVALID:
             return 'あなたの通知状態が無効になっています(何も通知されません)\n`/live-notification-toggle`で有効にできます'
 
+        # guild_idの有無でwhere句に条件を付与(対象ギルドのみにフィルタ)
+        guild_filter = '' if guild_id is None else f'and notification.notification_guild = {guild_id}'
+
         # notification(type,live,userを結合)を取得
         conn.row_factory = sqlite3.Row
         with conn:
             cur = conn.cursor()
-            select_notification_sql = '''
+            select_notification_sql = f'''
                             select notification.id as "id"
                                 , type.name as "name"
                                 , live.title as "title"
@@ -659,6 +711,7 @@ class LiveNotification:
                                 inner join user on notification.user_id = user.id
                                 inner join live on notification.live_id = live.id
                                 where user.discord_user_id = ?
+                                {guild_filter}
                                 order by notification.id, live.id
                             '''
             param = (author_id,)
@@ -723,6 +776,72 @@ class LiveNotification:
             return message
         return message
 
+    async def delete_live_notification(self, author_id:int, channel_id:str, notification_channel_id:int=None):
+        '''
+        配信通知を削除(notification_channel_idがない場合はwhere句から削除。0以下の場合はDM扱いでwhere句追加)
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        user_id = self.get_user(conn, author_id)
+        live_id,type_id = self.get_channel_id(conn, channel_id)
+        if live_id is None:
+            return f'{channel_id}は配信通知に存在しません(正しいチャンネルIDを指定ください)'
+        with conn:
+            cur = conn.cursor()
+            where_notification_channel_id,discord_channel = '',''
+            delete_param = (user_id, live_id)
+            if notification_channel_id is not None:
+                if notification_channel_id > 0:
+                    where_notification_channel_id = 'and notification_channel = ?'
+                    delete_param = (user_id, live_id, notification_channel_id)
+                    discord_channel = f'通知先: <#{notification_channel_id}> の'
+                else:
+                    where_notification_channel_id = 'and notification_channel is null'
+                    discord_channel = '通知先: **DM**の'
+            delete_sql = f'DELETE FROM notification WHERE user_id = ? and live_id = ? {where_notification_channel_id}'
+            cur.execute(delete_sql, delete_param)
+            live_title,type_name = self.get_channel_name(conn, channel_id)
+        conn.commit()
+        self.read()
+        self.encode()
+        # Herokuの時のみ、チャンネルにファイルを添付する
+        try:
+            await self.set_discord_attachment_file()
+        except discord.errors.Forbidden:
+            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+            LOG.error(message)
+            return message
+        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと。なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
+
+    async def set_filterword(self, author_id:int, filterword:str):
+        '''
+        フィルターワードを設定
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+
+        # 空文字が来た場合、現在のフィルターワードを返却する
+        if filterword == '':
+            db_filterword = self.get_user_filterword(conn, author_id)
+            return f'現在のfilterwordは「{db_filterword}」です'
+        user_id = self.get_user(conn, author_id)
+        with conn:
+            cur = conn.cursor()
+            update_param = (filterword, user_id)
+            update_sql = f'UPDATE user SET filter_words=? WHERE id = ?'
+            cur.execute(update_sql, update_param)
+        conn.commit()
+        self.read()
+        self.encode() 
+        # Herokuの時のみ、チャンネルにファイルを添付する
+        try:
+            await self.set_discord_attachment_file()
+        except discord.errors.Forbidden:
+            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+            LOG.error(message)
+            return message
+        return f'filterword(author_id: {author_id}, user_id:{user_id}, filterword:{filterword})を設定しました'
+
     def _check_user_status(self, conn, author_id:int):
         '''
         userの状態を返却
@@ -738,28 +857,15 @@ class LiveNotification:
             else:
                 return status
 
-    async def delete_live_notification(self, author_id:int, channel_id:str):
+    def _str_truncate(self, string, length, syoryaku='...'):
         '''
-        配信通知を削除
+        文字列を切り詰める
+
+        string: 対象の文字列
+        length: 切り詰め後の長さ
+        syoryaku: 省略したとき表示する文字
         '''
-        self.decode()
-        conn = sqlite3.connect(self.FILE_PATH)
-        user_id = self.get_user(conn, author_id)
-        live_id,type_id = self.get_channel_id(conn, channel_id)
-        if live_id is None:
-            return f'{channel_id}は配信通知に存在しません(正しいチャンネルIDを指定ください)'
-        with conn:
-            cur = conn.cursor()
-            delete_sql = 'DELETE FROM notification WHERE user_id = ? and live_id = ?'
-            cur.execute(delete_sql, (user_id, live_id))
-        conn.commit()
-        self.read()
-        self.encode()
-        # Herokuの時のみ、チャンネルにファイルを添付する
-        try:
-            await self.set_discord_attachment_file()
-        except discord.errors.Forbidden:
-            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-            LOG.error(message)
-            return message
-        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id})を削除しました)'
+        if string is None:
+            return '(なし)'
+        else:
+            return string[:length] + (syoryaku if string[length:] else '')
