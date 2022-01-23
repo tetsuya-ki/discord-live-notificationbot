@@ -38,6 +38,14 @@ class LiveNotification:
     async def prepare(self):
         '''
         sqlite3のdbを準備する
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
         '''
         # Herokuの時のみ、チャンネルからファイルを取得する
         await self.get_discord_attachment_file()
@@ -120,6 +128,17 @@ class LiveNotification:
         LOG.info('準備完了')
 
     async def get_discord_attachment_file(self):
+        '''
+        添付ファイルをdiscordから取得
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
+        '''
         # HerokuかRepl.itの時のみ実施
         if setting.IS_HEROKU or setting.IS_REPLIT:
             # 環境変数によって、添付ファイルのファイル名を変更する
@@ -183,6 +202,17 @@ class LiveNotification:
             LOG.debug('get_discord_attachment_file is over!')
 
     async def set_discord_attachment_file(self):
+        '''
+        discordにファイルを添付
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
+        '''
         # HerokuかRepl.itの時のみ実施
         if setting.IS_HEROKU or setting.IS_REPLIT:
             # 環境変数によって、添付ファイルのファイル名を変更する
@@ -236,6 +266,14 @@ class LiveNotification:
         '''
         暗号化されたファイルを復号します（以下の条件に合致する場合は何もしません）
         ＊KEEP_DECRYPTED_FILEがTRUE、かつ、復号済データが存在する場合、何もしない
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
         '''
         if not setting.KEEP_DECRYPTED_FILE and os.path.exists(self.aes.DEC_FILE_PATH):
             return
@@ -247,6 +285,14 @@ class LiveNotification:
         '''
         暗号化し、復号データを削除します（以下の条件に合致する場合は削除はしません）
         ＊KEEP_DECRYPTED_FILEがTRUE
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
         '''
         if os.path.exists(self.aes.DEC_FILE_PATH):
             self.aes.encode()
@@ -254,6 +300,17 @@ class LiveNotification:
                 os.remove(self.aes.DEC_FILE_PATH)
 
     def read(self):
+        '''
+        ファイルを読み込む(先頭1,000件のみ)
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
+        '''
         # readはdecodeしない
         conn = sqlite3.connect(self.FILE_PATH)
         conn.row_factory = sqlite3.Row
@@ -278,6 +335,21 @@ class LiveNotification:
             LOG.info('＊＊＊＊＊＊読み込みが完了しました＊＊＊＊＊＊')
 
     def get_user(self, conn, author_id):
+        '''
+        discordのuser_idをもとに、live notificationのuser_idを取得
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        author_id: int
+            discordのuser_id
+
+        Returns
+        -------
+        user_id: int
+            live notification userのid
+        '''
         select_user_sql = 'SELECT id FROM user WHERE discord_user_id = ?'
         with conn:
             cur = conn.cursor()
@@ -298,6 +370,21 @@ class LiveNotification:
             return user_id
 
     def get_user_filterword(self, conn, author_id):
+        '''
+
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        author_id: int
+            discordのuser_id
+
+        Returns
+        -------
+        filter_words: str
+            フィルターワード
+        '''
         select_user_filterword_sql = 'SELECT filter_words FROM user WHERE discord_user_id = ?'
         with conn:
             cur = conn.cursor()
@@ -309,6 +396,23 @@ class LiveNotification:
                 return ''
 
     def get_channel_id(self, conn, channel_id:str):
+        '''
+        channel_idをもとに、live notification idとtype_idを取得
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            channel_id(YouTubeのchannel_idやニコニコ動画のコミュニティID)
+
+        Returns
+        -------
+        id: int
+            live notificationのid
+        type_id: int
+            対象のtype_id
+        '''
         # 存在をチェック(あるならlive.idを返却)
         select_live_sql = 'SELECT id,type_id FROM live WHERE channel_id=:channel_id'
         with conn:
@@ -325,6 +429,23 @@ class LiveNotification:
                 return None,None
 
     def get_channel_name(self, conn, channel_id:str):
+        '''
+        channel_idをもとに、live notification titleとtype_nameを取得
+        
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            channel_id(YouTubeのchannel_idやニコニコ動画のコミュニティID)
+
+        Returns
+        -------
+        title: str
+            チャンネル名称
+        name: str
+            type_name(YouTubeやニコ生等)
+        '''
         # 存在をチェック(あるならlive.title,type.nameを返却)
         select_live_sql = 'SELECT live.title,type.name FROM live INNER JOIN type on type.id = live.type_id WHERE channel_id=:channel_id'
         with conn:
@@ -343,6 +464,20 @@ class LiveNotification:
     async def set_youtube(self, conn, channel_id:str):
         '''
         YouTubeをセットします
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            YouTubeのchannel_id
+
+        Returns
+        -------
+        live_id: int
+            登録したlive notificationのid
+        type_id: int
+            登録したlive notificationのtype_id(YouTubeのため、「1」)
         '''
         # xmlを確認
         async with aiohttp.ClientSession() as session:
@@ -379,6 +514,28 @@ class LiveNotification:
     async def get_youtube(self, channel_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
         '''
         YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
+
+        Parameters
+        ----------
+        channel_id: str
+            YouTubeのchannel_id
+        recent_id: str
+            最新のYouTubeの動画ID
+        recent_movie_length: int
+            最新のYouTubeの動画の長さ(未配信の予約配信の場合「0」になっている)
+        recent_updated_at: str
+            更新日時
+
+        Returns
+        -------
+        response_list: list(dict)
+            以下のdictを持つリスト
+                title: タイトル
+                raw_description: 元々の説明文
+                description: 説明文(前の説明と同じ場合省略される)
+                watch_url: 動画のURL
+                started_at: 動画の開始日時
+                thumbnail: 動画のサムネイル画像
         '''
         # xmlを確認
         async with aiohttp.ClientSession() as session:
@@ -507,6 +664,20 @@ class LiveNotification:
     async def set_nicolive(self, conn, channel_id:str):
         '''
         ニコ生をセットします
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            ニコ生のchannel_id
+
+        Returns
+        -------
+        live_id: int
+            登録したlive notificationのid
+        type_id: int
+            登録したlive notificationのtype_id(ニコ生のため、「2」)
         '''
         # json
         channel_id = channel_id.replace('co', '')
@@ -546,6 +717,22 @@ class LiveNotification:
     async def get_nicolive(self, channel_id:str, recent_id:str):
         '''
         ニコ生を確認します(放送中の場合、recent_idに登録し、通知対象を返却します)
+
+        Parameters
+        ----------
+        channel_id: str
+            ニコ生のchannel_id
+        recent_id: str
+            最新の動画ID
+
+        Returns
+        -------
+        response_list: list(dict)
+            以下のdictを持つリスト
+                title: タイトル
+                description: 説明文(前の説明と同じ場合省略される)
+                watch_url: 動画のURL
+                started_at: 動画の開始日時
         '''
         # json
         nico_live_url = f'https://com.nicovideo.jp/api/v1/communities/{channel_id}/lives/onair.json'
@@ -604,7 +791,31 @@ class LiveNotification:
 
     def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str, channel_id:str):
         '''
-        通知をセットします(すでに登録された通知の場合、登録しません)
+        ((直接使わない想定)通知をセットします(すでに登録された通知の場合、登録しません)
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        type_id: int
+            live notificationのtype_id
+        user_id: int
+            live notificationのuser_id
+        live_id: int
+            live notificationのlive_id
+        notification_guild: int
+            通知先のguild_id(DMの場合None)
+        notification_channel: int
+            通知先のchannel_id(DMの場合None)
+        mention: str
+            メンション
+        channel_id: str
+            登録するchannel_id
+
+        Returns
+        -------
+        message: str
+            登録した配信通知についてのメッセージ
         '''
         # notificationを検索(live_id+user_id+notification_channelがあれば処理終了)
         where_notification_channel = 'notification_channel=:notification_channel'
@@ -639,6 +850,24 @@ class LiveNotification:
     async def register_live_notification(self, guild_id: int, author_id:int, channel_id:str, notification_channel_id: int, mention: str):
         '''
         配信通知を登録
+
+        Parameters
+        ----------
+        guild_id: int
+            guild_id(DMの場合None)
+        author_id: int
+            discordのuser_id
+        channel_id: str
+            登録するchannel_id
+        notification_channel_id: int
+            通知先のchannel_id(DMの場合None)
+        mention: str
+            メンション
+
+        Returns
+        ----------
+        message: str
+            登録した通知についてのメッセージ
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -672,6 +901,14 @@ class LiveNotification:
     def read_db(self):
         '''
         DBを再読込します
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        ----------
+        なし
         '''
         self.decode()
         self.read()
@@ -680,6 +917,26 @@ class LiveNotification:
     def list_live_notification(self, author_id:int, guild_id:str=None):
         '''
         登録した配信通知を表示します
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+        guild_id: str
+            discordのguild_id
+
+        Returns
+        ----------
+        result_dict_list: list(result_dict)
+            以下のdictを持つリスト
+                notification_id: live notificationのid
+                type: live notificationのtype_id
+                title: チャンネルのタイトル
+                channel_id: チャンネルのchannel_id
+                channel: チャンネルのchannel_id
+                recent_id: 最新の動画ID
+                recent_movie_length: 最新の動画の長さ
+                updated_at: 更新日時
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -744,6 +1001,16 @@ class LiveNotification:
     async def toggle_user_status(self, author_id:int):
         '''
         userのステータスをトグルします(INVALID⇔VALID)
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+
+        Returns
+        ----------
+        message: str
+            変更されたuserのステータスについてのメッセージ
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -779,6 +1046,21 @@ class LiveNotification:
     async def delete_live_notification(self, author_id:int, channel_id:str, notification_channel_id:int=None):
         '''
         配信通知を削除(notification_channel_idがない場合はwhere句から削除。0以下の場合はDM扱いでwhere句追加)
+
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+        channel_id: str
+            channel_id(YouTubeのchannel_idやニコニコ動画のコミュニティID)
+        notification_channel_id: int
+            通知先のchannel_id(DMの場合None)
+
+        Returns
+        ----------
+        message: str
+            削除した配信通知についてのメッセージ
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -816,6 +1098,17 @@ class LiveNotification:
     async def set_filterword(self, author_id:int, filterword:str):
         '''
         フィルターワードを設定
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+        filterword: str
+            フィルターワード
+
+        Returns
+        ----------
+        なし
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -845,6 +1138,18 @@ class LiveNotification:
     def _check_user_status(self, conn, author_id:int):
         '''
         userの状態を返却
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        author_id: int
+            discordのuser_id
+
+        Returns
+        ----------
+        status: str
+            live notificationのstatus(存在しない場合はNone)
         '''
         select_user_sql = 'SELECT status FROM user WHERE discord_user_id = ?'
         with conn:
@@ -857,13 +1162,23 @@ class LiveNotification:
             else:
                 return status
 
-    def _str_truncate(self, string, length, syoryaku='...'):
+    def _str_truncate(self, string:str, length:int, syoryaku:str='...'):
         '''
         文字列を切り詰める
 
-        string: 対象の文字列
-        length: 切り詰め後の長さ
-        syoryaku: 省略したとき表示する文字
+        Parameters
+        ----------
+        string: str
+            対象の文字列
+        length: int
+            切り詰め後の長さ
+        syoryaku: str
+            省略したとき表示する文字
+
+        Returns
+        ----------
+        string: str
+            切り詰められた文字列
         '''
         if string is None:
             return '(なし)'
