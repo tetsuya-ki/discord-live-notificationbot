@@ -563,6 +563,7 @@ class LiveNotification:
                             return
 
                     # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
+                    youtube = None
                     if (recent_id != youtube_recent_id) \
                         or (recent_id == youtube_recent_id and recent_movie_length == 0):
                         youtube_recent_length = 0
@@ -581,7 +582,7 @@ class LiveNotification:
                     # 配信開始として通知するべきかチェック
                     live_streaming_start_flg = None
                     # 今回チェックした際に配信開始していたパターン
-                    if youtube.length == 0 and youtube_recent_length != 0:
+                    if youtube is not None and recent_movie_length == 0 and youtube_recent_length != 0:
                         live_streaming_start_flg = True
                     # DBの最新動画の長さが0のまま変わってない場合は、対応なし
                     if recent_id == youtube_recent_id and youtube_recent_length == 0:
