@@ -863,7 +863,7 @@ class LiveNotification:
                 description: 説明文
                 watch_url: 動画のURL
                 started_at: 動画の開始日時
-                thumbnail: サムネイル(あれば)
+                thumbnail: 動画のサムネイル画像(あれば)
         '''
         # json
         twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
