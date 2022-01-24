@@ -46,6 +46,9 @@ class LiveNotificationCog(commands.Cog):
             elif live['type_id'] == self.liveNotification.TYPE_NICOLIVE:
                 result_dict_list = await self.liveNotification.get_nicolive(live['channel_id'], live['recent_id'])
                 message_suffix = 'の配信が開始されました！'
+            elif live['type_id'] == self.liveNotification.TYPE_TWITCASTING:
+                result_dict_list = await self.liveNotification.get_twitcasting(live['channel_id'], live['recent_id'])
+                message_suffix = 'の配信が開始されました！'
 
             if result_dict_list is None or len(result_dict_list) == 0:
                 continue
