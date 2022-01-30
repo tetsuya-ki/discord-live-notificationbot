@@ -309,7 +309,7 @@ class LiveNotification:
 
     def read(self):
         '''
-        ファイルを読み込む(先頭1,000件のみ)
+        ファイルを読み込む(先頭2,000件のみ)
 
         Parameters
         ----------
@@ -332,7 +332,7 @@ class LiveNotification:
                             '''
             LOG.debug(select_notification_sql)
             cur.execute(select_notification_sql)
-            self.notification_rows = cur.fetchmany(1000)
+            self.notification_rows = cur.fetchmany(2000)
 
             select_live_sql = f'''
                                 select * from live
