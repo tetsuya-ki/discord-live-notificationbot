@@ -8,6 +8,7 @@ from logging import getLogger
 from pytube import YouTube
 from .aes_angou import Aes_angou
 from . import setting
+from xml.sax.saxutils import unescape
 
 import datetime, discord, sqlite3, os, pytube, re, requests
 LOG = getLogger('live-notification-bot')
@@ -816,19 +817,22 @@ class LiveNotification:
             登録したlive notificationのtype_id(ツイキャスのため、「3」)
         '''
         # json
-        twicas_last_movie_url = f'https://frontendapi.twitcasting.tv/next_watch?user_id={channel_id}'
+        twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
+        nickname = channel_id
         async with aiohttp.ClientSession() as session:
-            async with session.get(twicas_last_movie_url) as r:
+            async with session.get(twicas_latest_movie_url) as r:
                 if r.status == 200:
-                    twicas_last_movie_response = await r.json()
-                    twicas_next_movie = twicas_last_movie_response['next_movie']
+                    # 最新の動画IDをリクエスト。存在する場合はユーザーページを開き、投稿者名を取得
+                    twicas_user_url = f'https://twitcasting.tv/{channel_id}'
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(twicas_user_url) as r:
+                            if r.status == 200:
+                                html = await r.text()
+                                match_object = re.search(r'<span class="tw-user-nav-name">(.+?)\s*</span>', html)
+                                if match_object is not None and len(match_object.groups()) >= 1:
+                                    nickname = unescape(match_object.group(1))
                 else:
                     return None,None
-        nickname = channel_id
-        if twicas_next_movie is not None and twicas_next_movie.get('user_name') is not None:
-            nickname = twicas_next_movie.get('user_name')
-        else:
-            return None,None
         # データ登録
         with conn:
             cur = conn.cursor()
