@@ -334,7 +334,12 @@ class LiveNotification:
             cur.execute(select_notification_sql)
             self.notification_rows = cur.fetchmany(1000)
 
-            select_live_sql = f'select * from live order by live.id'
+            select_live_sql = f'''
+                                select * from live
+                                where exists (
+                                    select 1 from notification where live.id = notification.live_id
+                                )
+                                order by live.id'''
             LOG.debug(select_live_sql)
             cur.execute(select_live_sql)
             self.live_rows = cur.fetchmany(1000)
