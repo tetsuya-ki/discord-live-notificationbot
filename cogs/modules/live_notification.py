@@ -876,7 +876,7 @@ class LiveNotification:
                 if r.status == 200:
                     twicas_latest_movie_response = await r.json()
                     twicas_latest_movie = twicas_latest_movie_response['movie']
-                    LOG.debug(twicas_latest_movie)
+                    LOG.debug(channel_id + '-> ' + str(twicas_latest_movie))
                     # 放送中かチェック
                     if twicas_latest_movie is None or twicas_latest_movie.get('is_on_live') is None or twicas_latest_movie.get('is_on_live') is False:
                         return
@@ -951,10 +951,10 @@ class LiveNotification:
                     description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
 
                     twicas_url = f'https://twitcasting.tv/{channel_id}/movie/{twicas_latest_movie_id}'
-                    twicas_dict = {'title': str(twicas_viewer_movie.get('title'))
-                            ,'description': str(description)
-                            ,'watch_url': twicas_url
-                            ,'started_at': dt_jst_text}
+                    twicas_dict = {'title': title
+                                    ,'description': str(description)
+                                    ,'watch_url': twicas_url
+                                    ,'started_at': dt_jst_text}
                     if thumbnail:
                         twicas_dict['thumbnail'] = thumbnail
 
