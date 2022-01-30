@@ -21,6 +21,7 @@ class LiveNotificationCog(commands.Cog):
         self.liveNotification = LiveNotification(bot)
         self.JST = timezone(timedelta(hours=+9), 'JST')
         self.FILTERWORD_MAX_SIZE = 1500
+        self.task_is_excuting = False
 
     # 読み込まれた時の処理
     @commands.Cog.listener()
@@ -37,6 +38,12 @@ class LiveNotificationCog(commands.Cog):
     async def printer(self):
         now = datetime.datetime.now(self.JST)
         LOG.debug(f'printer is kicked.({now})')
+        # すでに起動していたら、何もしない
+        if self.task_is_excuting:
+            LOG.info(f'printer is already kicked.')
+            return
+        else:
+            self.task_is_excuting = True
 
         # liveの分だけ確認していく
         for live in self.liveNotification.live_rows:
@@ -128,6 +135,9 @@ class LiveNotificationCog(commands.Cog):
                                             LOG.error(msg)
                                             continue
                                         continue
+        # notificationを全て通知したら、ログを出力 & task_is_excutingをFalseにする
+        LOG.info(f'task is finished.')
+        self.task_is_excuting = False
 
     @cog_ext.cog_slash(
         name='live-notification_add',
