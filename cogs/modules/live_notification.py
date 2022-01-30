@@ -8,8 +8,9 @@ from logging import getLogger
 from pytube import YouTube
 from .aes_angou import Aes_angou
 from . import setting
+from xml.sax.saxutils import unescape
 
-import datetime, discord, sqlite3, os, pytube, re
+import datetime, discord, sqlite3, os, pytube, re, requests
 LOG = getLogger('live-notification-bot')
 
 class LiveNotification:
@@ -20,9 +21,11 @@ class LiveNotification:
     LIVE_CONTROL_CHANNEL = 'live_control_channel'
     YOUTUBE = 'YouTube'
     NICOLIVE = 'ニコ生'
+    TWITCASTING = 'ツイキャス'
     YOUTUBE_URL = 'https://www.youtube.com/feeds/videos.xml?channel_id='
     TYPE_YOUTUBE = 1
     TYPE_NICOLIVE = 2
+    TYPE_TWITCASTING = 3
     NOTIFICATION_MAX = 5
     STATUS_VALID = 'VALID'
     STATUS_INVALID = 'INVALID'
@@ -38,6 +41,14 @@ class LiveNotification:
     async def prepare(self):
         '''
         sqlite3のdbを準備する
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
         '''
         # Herokuの時のみ、チャンネルからファイルを取得する
         await self.get_discord_attachment_file()
@@ -114,12 +125,28 @@ class LiveNotification:
                 remind_param_nicolive = (self.NICOLIVE, now, now)
                 cur.execute(insert_sql, remind_param_nicolive)
                 conn.commit()
+            cur.execute(check_sql, (self.TWITCASTING,))
+            if cur.fetchall()[0][0] == 0:
+                remind_param_twitcasting = (self.TWITCASTING, now, now)
+                cur.execute(insert_sql, remind_param_twitcasting)
+                conn.commit()
 
         self.read()
         self.encode()
         LOG.info('準備完了')
 
     async def get_discord_attachment_file(self):
+        '''
+        添付ファイルをdiscordから取得
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
+        '''
         # HerokuかRepl.itの時のみ実施
         if setting.IS_HEROKU or setting.IS_REPLIT:
             # 環境変数によって、添付ファイルのファイル名を変更する
@@ -183,6 +210,17 @@ class LiveNotification:
             LOG.debug('get_discord_attachment_file is over!')
 
     async def set_discord_attachment_file(self):
+        '''
+        discordにファイルを添付
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
+        '''
         # HerokuかRepl.itの時のみ実施
         if setting.IS_HEROKU or setting.IS_REPLIT:
             # 環境変数によって、添付ファイルのファイル名を変更する
@@ -236,6 +274,14 @@ class LiveNotification:
         '''
         暗号化されたファイルを復号します（以下の条件に合致する場合は何もしません）
         ＊KEEP_DECRYPTED_FILEがTRUE、かつ、復号済データが存在する場合、何もしない
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
         '''
         if not setting.KEEP_DECRYPTED_FILE and os.path.exists(self.aes.DEC_FILE_PATH):
             return
@@ -247,6 +293,14 @@ class LiveNotification:
         '''
         暗号化し、復号データを削除します（以下の条件に合致する場合は削除はしません）
         ＊KEEP_DECRYPTED_FILEがTRUE
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
         '''
         if os.path.exists(self.aes.DEC_FILE_PATH):
             self.aes.encode()
@@ -254,6 +308,17 @@ class LiveNotification:
                 os.remove(self.aes.DEC_FILE_PATH)
 
     def read(self):
+        '''
+        ファイルを読み込む(先頭1,000件のみ)
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        -------
+        なし
+        '''
         # readはdecodeしない
         conn = sqlite3.connect(self.FILE_PATH)
         conn.row_factory = sqlite3.Row
@@ -278,6 +343,21 @@ class LiveNotification:
             LOG.info('＊＊＊＊＊＊読み込みが完了しました＊＊＊＊＊＊')
 
     def get_user(self, conn, author_id):
+        '''
+        discordのuser_idをもとに、live notificationのuser_idを取得
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        author_id: int
+            discordのuser_id
+
+        Returns
+        -------
+        user_id: int
+            live notification userのid
+        '''
         select_user_sql = 'SELECT id FROM user WHERE discord_user_id = ?'
         with conn:
             cur = conn.cursor()
@@ -298,6 +378,21 @@ class LiveNotification:
             return user_id
 
     def get_user_filterword(self, conn, author_id):
+        '''
+
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        author_id: int
+            discordのuser_id
+
+        Returns
+        -------
+        filter_words: str
+            フィルターワード
+        '''
         select_user_filterword_sql = 'SELECT filter_words FROM user WHERE discord_user_id = ?'
         with conn:
             cur = conn.cursor()
@@ -309,6 +404,23 @@ class LiveNotification:
                 return ''
 
     def get_channel_id(self, conn, channel_id:str):
+        '''
+        channel_idをもとに、live notification idとtype_idを取得
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            channel_id(YouTubeのchannel_idやニコニコ動画のコミュニティID)
+
+        Returns
+        -------
+        id: int
+            live notificationのid
+        type_id: int
+            対象のtype_id
+        '''
         # 存在をチェック(あるならlive.idを返却)
         select_live_sql = 'SELECT id,type_id FROM live WHERE channel_id=:channel_id'
         with conn:
@@ -325,6 +437,23 @@ class LiveNotification:
                 return None,None
 
     def get_channel_name(self, conn, channel_id:str):
+        '''
+        channel_idをもとに、live notification titleとtype_nameを取得
+        
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            channel_id(YouTubeのchannel_idやニコニコ動画のコミュニティID)
+
+        Returns
+        -------
+        title: str
+            チャンネル名称
+        name: str
+            type_name(YouTubeやニコ生等)
+        '''
         # 存在をチェック(あるならlive.title,type.nameを返却)
         select_live_sql = 'SELECT live.title,type.name FROM live INNER JOIN type on type.id = live.type_id WHERE channel_id=:channel_id'
         with conn:
@@ -343,6 +472,20 @@ class LiveNotification:
     async def set_youtube(self, conn, channel_id:str):
         '''
         YouTubeをセットします
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            YouTubeのchannel_id
+
+        Returns
+        -------
+        live_id: int
+            登録したlive notificationのid
+        type_id: int
+            登録したlive notificationのtype_id(YouTubeのため、「1」)
         '''
         # xmlを確認
         async with aiohttp.ClientSession() as session:
@@ -366,7 +509,7 @@ class LiveNotification:
                 pass
 
             create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, recent_movie_length, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)'
-            live_param = (1, None, channel_id, recent_id, youtube_recent_length, title, now, now)
+            live_param = (self.TYPE_YOUTUBE, None, channel_id, recent_id, youtube_recent_length, title, now, now)
             cur.execute(create_live_sql, live_param)
             # get id
             get_id_sql = 'SELECT id FROM live WHERE rowid = last_insert_rowid()'
@@ -374,11 +517,33 @@ class LiveNotification:
             live_id = cur.fetchone()[0]
             LOG.info(f'liveにid:{live_id}({channel_id})を追加しました')
             conn.commit()
-            return live_id,1
+            return live_id,self.TYPE_YOUTUBE
 
     async def get_youtube(self, channel_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
         '''
         YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
+
+        Parameters
+        ----------
+        channel_id: str
+            YouTubeのchannel_id
+        recent_id: str
+            最新のYouTubeの動画ID
+        recent_movie_length: int
+            最新のYouTubeの動画の長さ(未配信の予約配信の場合「0」になっている)
+        recent_updated_at: str
+            更新日時
+
+        Returns
+        -------
+        response_list: list(dict)
+            以下のdictを持つリスト
+                title: タイトル
+                raw_description: 元々の説明文
+                description: 説明文(前の説明と同じ場合省略される)
+                watch_url: 動画のURL
+                started_at: 動画の開始日時
+                thumbnail: 動画のサムネイル画像
         '''
         # xmlを確認
         async with aiohttp.ClientSession() as session:
@@ -399,6 +564,7 @@ class LiveNotification:
                             return
 
                     # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
+                    youtube = None
                     if (recent_id != youtube_recent_id) \
                         or (recent_id == youtube_recent_id and recent_movie_length == 0):
                         youtube_recent_length = 0
@@ -417,7 +583,7 @@ class LiveNotification:
                     # 配信開始として通知するべきかチェック
                     live_streaming_start_flg = None
                     # 今回チェックした際に配信開始していたパターン
-                    if youtube.length == 0 and youtube_recent_length != 0:
+                    if youtube is not None and recent_movie_length == 0 and youtube_recent_length != 0:
                         live_streaming_start_flg = True
                     # DBの最新動画の長さが0のまま変わってない場合は、対応なし
                     if recent_id == youtube_recent_id and youtube_recent_length == 0:
@@ -507,6 +673,20 @@ class LiveNotification:
     async def set_nicolive(self, conn, channel_id:str):
         '''
         ニコ生をセットします
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            ニコ生のchannel_id
+
+        Returns
+        -------
+        live_id: int
+            登録したlive notificationのid
+        type_id: int
+            登録したlive notificationのtype_id(ニコ生のため、「2」)
         '''
         # json
         channel_id = channel_id.replace('co', '')
@@ -533,7 +713,7 @@ class LiveNotification:
             cur = conn.cursor()
             now = datetime.datetime.now(self.JST)
             create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?)'
-            live_param = (2, int(nico_user_id), channel_id, nico_recent_id, nico_nickname, now, now)
+            live_param = (self.TYPE_NICOLIVE, int(nico_user_id), channel_id, nico_recent_id, nico_nickname, now, now)
             cur.execute(create_live_sql, live_param)
             # get id
             get_id_sql = 'SELECT id FROM live WHERE rowid = last_insert_rowid()'
@@ -541,11 +721,27 @@ class LiveNotification:
             live_id = cur.fetchone()[0]
             LOG.info(f'liveにid:{id}({channel_id})を追加しました')
             conn.commit()
-            return live_id,2
+            return live_id,self.TYPE_NICOLIVE
 
     async def get_nicolive(self, channel_id:str, recent_id:str):
         '''
         ニコ生を確認します(放送中の場合、recent_idに登録し、通知対象を返却します)
+
+        Parameters
+        ----------
+        channel_id: str
+            ニコ生のchannel_id
+        recent_id: str
+            最新の動画ID
+
+        Returns
+        -------
+        response_list: list(dict)
+            以下のdictを持つリスト
+                title: タイトル
+                description: 説明文(前の説明と同じ場合省略される)
+                watch_url: 動画のURL
+                started_at: 動画の開始日時
         '''
         # json
         nico_live_url = f'https://com.nicovideo.jp/api/v1/communities/{channel_id}/lives/onair.json'
@@ -602,10 +798,212 @@ class LiveNotification:
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
                             ,'started_at': dt_jst_text}]
 
+    async def set_twitcasting(self, conn, channel_id:str):
+        '''
+        ツイキャスをセットします
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        channel_id: str
+            ツイキャスのchannel_id
+
+        Returns
+        -------
+        live_id: int
+            登録したlive notificationのid
+        type_id: int
+            登録したlive notificationのtype_id(ツイキャスのため、「3」)
+        '''
+        # json
+        twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
+        nickname = channel_id
+        async with aiohttp.ClientSession() as session:
+            async with session.get(twicas_latest_movie_url) as r:
+                if r.status == 200:
+                    # 最新の動画IDをリクエスト。存在する場合はユーザーページを開き、投稿者名を取得
+                    twicas_user_url = f'https://twitcasting.tv/{channel_id}'
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(twicas_user_url) as r:
+                            if r.status == 200:
+                                html = await r.text()
+                                match_object = re.search(r'<span class="tw-user-nav-name">(.+?)\s*</span>', html)
+                                if match_object is not None and len(match_object.groups()) >= 1:
+                                    nickname = unescape(match_object.group(1))
+                else:
+                    return None,None
+        # データ登録
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?)'
+            live_param = (self.TYPE_TWITCASTING, None, channel_id, None, nickname, now, now)
+            cur.execute(create_live_sql, live_param)
+            # get id
+            get_id_sql = 'SELECT id FROM live WHERE rowid = last_insert_rowid()'
+            cur.execute(get_id_sql)
+            live_id = cur.fetchone()[0]
+            LOG.info(f'liveにid:{id}({channel_id})を追加しました')
+            conn.commit()
+            return live_id,self.TYPE_TWITCASTING
+
+    async def get_twitcasting(self, channel_id:str, recent_id:str):
+        '''
+        ツイキャスを確認します(放送中の場合、recent_idに登録し、通知対象を返却します)
+
+        Parameters
+        ----------
+        channel_id: str
+            ツイキャスのchannel_id
+        recent_id: str
+            最新の動画ID
+
+        Returns
+        -------
+        response_list: list(dict)
+            以下のdictを持つリスト
+                title: タイトル
+                description: 説明文
+                watch_url: 動画のURL
+                started_at: 動画の開始日時
+                thumbnail: 動画のサムネイル画像(あれば)
+        '''
+        # json
+        twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
+        async with aiohttp.ClientSession() as session:
+            async with session.get(twicas_latest_movie_url) as r:
+                if r.status == 200:
+                    twicas_latest_movie_response = await r.json()
+                    twicas_latest_movie = twicas_latest_movie_response['movie']
+                    LOG.debug(channel_id + '-> ' + str(twicas_latest_movie))
+                    # 放送中かチェック
+                    if twicas_latest_movie is None or twicas_latest_movie.get('is_on_live') is None or twicas_latest_movie.get('is_on_live') is False:
+                        return
+                    twicas_latest_movie_id = twicas_latest_movie.get('id')
+                    # すでに通知済かチェック
+                    if recent_id == str(twicas_latest_movie_id):
+                        return
+
+                    # recent_idの更新処理
+                    self.decode()
+                    conn = sqlite3.connect(self.FILE_PATH)
+                    with conn:
+                        cur = conn.cursor()
+                        now = datetime.datetime.now(self.JST)
+                        update_recent_id_sql = 'UPDATE live SET recent_id = ?, updated_at = ? WHERE channel_id = ?'
+                        param = (twicas_latest_movie_id, now, channel_id)
+                        cur.execute(update_recent_id_sql, param)
+                        # get id
+                        get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
+                        cur.execute(get_id_sql, (channel_id,))
+                        live_id = cur.fetchone()[0]
+                        LOG.info(f'liveにid:{live_id}({channel_id})のrecent_idを{twicas_latest_movie_id}に更新しました')
+                    conn.commit()
+                    self.read()
+                    self.encode()
+                    # Herokuの時のみ、チャンネルにファイルを添付する
+                    try:
+                        await self.set_discord_attachment_file()
+                    except discord.errors.Forbidden:
+                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                        LOG.error(message)
+                        return message
+
+                    twicas_get_token_url = 'https://twitcasting.tv/happytoken.php'
+                    form_data = aiohttp.FormData()
+                    form_data.add_field(name='movie_id', value=twicas_latest_movie_id)
+                    temp_description = ''
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(twicas_get_token_url, data=form_data) as r:
+                            if r.status == 200:
+                                twicas_get_token_response = await r.json()
+                                if twicas_get_token_response is not None and twicas_get_token_response.get('token') is not None:
+                                    # ユーザーページを開き、タイトル、説明文を取得
+                                    twicas_user_url = f'https://twitcasting.tv/{channel_id}'
+                                    async with aiohttp.ClientSession() as session:
+                                        async with session.get(twicas_user_url) as r:
+                                            if r.status == 200:
+                                                html = await r.text()
+                                                match_object_title = re.search(r'<meta property="og:title" content="(.*)"/>', html)
+                                                if match_object_title is not None and len(match_object_title.groups()) >= 1:
+                                                    title = unescape(match_object_title.group(1))
+                                                match_object_description = re.search(r'<meta name="description"\n\s+content="(.*)"/>', html)
+                                                if match_object_description is not None and len(match_object_description.groups()) >= 1:
+                                                    temp_description = unescape(match_object_description.group(1))
+                                                    temp_description = re.sub(title+r'\s*/\s*', '', temp_description)
+                                    token = twicas_get_token_response.get('token')
+                                    params = {'token': token}
+                                    twicas_viewer_url = f'https://frontendapi.twitcasting.tv/movies/{twicas_latest_movie_id}/status/viewer'
+                                    # 配信名など取得
+                                    async with aiohttp.ClientSession() as session:
+                                        async with session.get(twicas_viewer_url, params=params) as r:
+                                            if r.status == 200:
+                                                twicas_viewer_response = await r.json()
+                                                twicas_viewer_movie = twicas_viewer_response.get('movie')
+                                    # 配信開始時刻の取得
+                                    twicas_info_url = f'https://frontendapi.twitcasting.tv/movies/{twicas_latest_movie_id}/info'
+                                    async with aiohttp.ClientSession() as session:
+                                        async with session.get(twicas_info_url, params=params) as r:
+                                            if r.status == 200:
+                                                twicas_info_response = await r.json()
+                                                if twicas_info_response is not None and twicas_info_response.get('started_at') is not None:
+                                                    started_datetime = datetime.datetime.fromtimestamp(twicas_info_response.get('started_at'), self.JST)
+                                                    dt_jst_text = started_datetime.strftime(self.DATETIME_FORMAT)
+                                    # サムネイルの取得(aiohttpだと上手くいかなかったのでrequestsを使用)
+                                    twicas_thumbnail_url = f'https://twitcasting.tv/userajax.php?c=updateindexthumbnail&m={twicas_latest_movie_id}'
+                                    resp = requests.get(twicas_thumbnail_url, allow_redirects=False)
+                                    if resp.headers.get('Location'):
+                                        thumbnail = resp.headers.get('Location')
+                            else:
+                                return
+
+                    # 説明文の組み立て
+                    twicas_viewer_movie_category = twicas_viewer_movie.get('category')
+                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category.get('name') is not None else temp_description
+                    temp_description = temp_description + f'''\nピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
+                    description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
+
+                    twicas_url = f'https://twitcasting.tv/{channel_id}/movie/{twicas_latest_movie_id}'
+                    twicas_dict = {'title': title
+                                    ,'description': str(description)
+                                    ,'watch_url': twicas_url
+                                    ,'started_at': dt_jst_text}
+                    if thumbnail:
+                        twicas_dict['thumbnail'] = thumbnail
+
+                    # 通知対象として返却
+                    return [twicas_dict]
+
     def set_notification(self, conn, type_id:int, user_id:int, live_id:int, notification_guild:int, notification_channel:int, mention:str, channel_id:str):
         '''
-        通知をセットします(すでに登録された通知の場合、登録しません)
+        ((直接使わない想定)通知をセットします(すでに登録された通知の場合、登録しません)
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        type_id: int
+            live notificationのtype_id
+        user_id: int
+            live notificationのuser_id
+        live_id: int
+            live notificationのlive_id
+        notification_guild: int
+            通知先のguild_id(DMの場合None)
+        notification_channel: int
+            通知先のchannel_id(DMの場合None)
+        mention: str
+            メンション
+        channel_id: str
+            登録するchannel_id
+
+        Returns
+        -------
+        message: str
+            登録した配信通知についてのメッセージ
         '''
+        LOG.debug('set_notification: ' + channel_id)
         # notificationを検索(live_id+user_id+notification_channelがあれば処理終了)
         where_notification_channel = 'notification_channel=:notification_channel'
         if notification_channel is None:
@@ -639,6 +1037,24 @@ class LiveNotification:
     async def register_live_notification(self, guild_id: int, author_id:int, channel_id:str, notification_channel_id: int, mention: str):
         '''
         配信通知を登録
+
+        Parameters
+        ----------
+        guild_id: int
+            guild_id(DMの場合None)
+        author_id: int
+            discordのuser_id
+        channel_id: str
+            登録するchannel_id
+        notification_channel_id: int
+            通知先のchannel_id(DMの場合None)
+        mention: str
+            メンション
+
+        Returns
+        ----------
+        message: str
+            登録した通知についてのメッセージ
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -646,9 +1062,35 @@ class LiveNotification:
             user_id = self.get_user(conn, author_id)
             live_id,type_id = self.get_channel_id(conn, channel_id)
             if live_id is None:
-                live_id,type_id = await self.set_youtube(conn, channel_id)
+                # YouTube
+                match_object = re.search(r'https://www.youtube.com/channel/(.+)$', channel_id)
+                if match_object is not None and len(match_object.groups()) >= 1:
+                    live_id,type_id = self.get_channel_id(conn, match_object.group(1))
+                    channel_id = match_object.group(1)
+                    if live_id is None:
+                        live_id,type_id = await self.set_youtube(conn, channel_id)
+                else:
+                    live_id,type_id = await self.set_youtube(conn, channel_id)
                 if live_id is None:
-                    live_id,type_id = await self.set_nicolive(conn, channel_id)
+                    # NicoLive
+                    match_object = re.search(r'https://com.nicovideo.jp/community/(.+)$', channel_id)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        live_id,type_id = self.get_channel_id(conn, match_object.group(1))
+                        channel_id = match_object.group(1)
+                        if live_id is None:
+                            live_id,type_id = await self.set_nicolive(conn, channel_id)
+                    else:
+                        live_id,type_id = await self.set_nicolive(conn, channel_id)
+                if live_id is None:
+                    # Twitcasting
+                    match_object = re.search(r'https://twitcasting.tv/(.+?)((?=/)|$)', channel_id)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        live_id,type_id = self.get_channel_id(conn, match_object.group(1))
+                        channel_id = match_object.group(1)
+                        if live_id is None:
+                            live_id,type_id = await self.set_twitcasting(conn, channel_id)
+                    else:
+                        live_id,type_id = await self.set_twitcasting(conn, channel_id)
                 if live_id is None:
                     conn.commit()
                     self.read()
@@ -672,6 +1114,14 @@ class LiveNotification:
     def read_db(self):
         '''
         DBを再読込します
+
+        Parameters
+        ----------
+        なし
+
+        Returns
+        ----------
+        なし
         '''
         self.decode()
         self.read()
@@ -680,6 +1130,26 @@ class LiveNotification:
     def list_live_notification(self, author_id:int, guild_id:str=None):
         '''
         登録した配信通知を表示します
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+        guild_id: str
+            discordのguild_id
+
+        Returns
+        ----------
+        result_dict_list: list(result_dict)
+            以下のdictを持つリスト
+                notification_id: live notificationのid
+                type: live notificationのtype_id
+                title: チャンネルのタイトル
+                channel_id: チャンネルのchannel_id
+                channel: チャンネルのchannel_id
+                recent_id: 最新の動画ID
+                recent_movie_length: 最新の動画の長さ
+                updated_at: 更新日時
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -744,6 +1214,16 @@ class LiveNotification:
     async def toggle_user_status(self, author_id:int):
         '''
         userのステータスをトグルします(INVALID⇔VALID)
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+
+        Returns
+        ----------
+        message: str
+            変更されたuserのステータスについてのメッセージ
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -779,10 +1259,36 @@ class LiveNotification:
     async def delete_live_notification(self, author_id:int, channel_id:str, notification_channel_id:int=None):
         '''
         配信通知を削除(notification_channel_idがない場合はwhere句から削除。0以下の場合はDM扱いでwhere句追加)
+
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+        channel_id: str
+            channel_id(YouTubeのchannel_idやニコニコ動画のコミュニティID)
+        notification_channel_id: int
+            通知先のchannel_id(DMの場合None)
+
+        Returns
+        ----------
+        message: str
+            削除した配信通知についてのメッセージ
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
         user_id = self.get_user(conn, author_id)
+
+        # URLから変換
+        match_object_youtube = re.search(r'https://www.youtube.com/channel/(.+)$', channel_id)
+        match_object_nicovideo = re.search(r'https://com.nicovideo.jp/community/(.+)$', channel_id)
+        match_object_twicas = re.search(r'https://twitcasting.tv/(.+?)((?=/)|$)', channel_id)
+        if match_object_youtube is not None and len(match_object_youtube.groups()) >= 1:
+            channel_id = match_object_youtube.group(1)
+        elif match_object_nicovideo is not None and len(match_object_nicovideo.groups()) >= 1:
+            channel_id = match_object_nicovideo.group(1)
+        elif match_object_twicas is not None and len(match_object_twicas.groups()) >= 1:
+            channel_id = match_object_twicas.group(1)
         live_id,type_id = self.get_channel_id(conn, channel_id)
         if live_id is None:
             return f'{channel_id}は配信通知に存在しません(正しいチャンネルIDを指定ください)'
@@ -811,11 +1317,22 @@ class LiveNotification:
             message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
             LOG.error(message)
             return message
-        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと。なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
+        return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと\n　なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
 
     async def set_filterword(self, author_id:int, filterword:str):
         '''
         フィルターワードを設定
+
+        Parameters
+        ----------
+        author_id: int
+            discordのuser_id
+        filterword: str
+            フィルターワード
+
+        Returns
+        ----------
+        なし
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
@@ -845,6 +1362,18 @@ class LiveNotification:
     def _check_user_status(self, conn, author_id:int):
         '''
         userの状態を返却
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        author_id: int
+            discordのuser_id
+
+        Returns
+        ----------
+        status: str
+            live notificationのstatus(存在しない場合はNone)
         '''
         select_user_sql = 'SELECT status FROM user WHERE discord_user_id = ?'
         with conn:
@@ -857,13 +1386,23 @@ class LiveNotification:
             else:
                 return status
 
-    def _str_truncate(self, string, length, syoryaku='...'):
+    def _str_truncate(self, string:str, length:int, syoryaku:str='...'):
         '''
         文字列を切り詰める
 
-        string: 対象の文字列
-        length: 切り詰め後の長さ
-        syoryaku: 省略したとき表示する文字
+        Parameters
+        ----------
+        string: str
+            対象の文字列
+        length: int
+            切り詰め後の長さ
+        syoryaku: str
+            省略したとき表示する文字
+
+        Returns
+        ----------
+        string: str
+            切り詰められた文字列
         '''
         if string is None:
             return '(なし)'
