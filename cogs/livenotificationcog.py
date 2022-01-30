@@ -76,7 +76,9 @@ class LiveNotificationCog(commands.Cog):
                                 message = f'''{notification['name']}で{live['title']}さんの予約配信が追加されました！\n動画名: {video_title}'''
                                 if result_dict.get('live_streaming_start_datetime') is not None:
                                     message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
-                            description = f'''{result_dict.get('description')} by {live['title']}'''
+
+                            # 説明文短縮処理
+                            description = self.liveNotification.make_description(result_dict.get('description'), live['title'], notification['long_description'] == 'True')
 
                             # フィルター処理
                             if notification['filter_words'] is not None:
@@ -413,6 +415,18 @@ class LiveNotificationCog(commands.Cog):
                                     description='通知対象外とする文字列をコンマ区切りで指定(すべて削除は「,」のみ指定)',
                                     option_type=3,
                                     required=False),
+        manage_commands.create_option(name='is_long_description',
+                                    description='説明文を長くするかどうか',
+                                    option_type=3,
+                                    required=False,
+                                    choices=[
+                                        manage_commands.create_choice(
+                                        name='長くする',
+                                        value='True'),
+                                        manage_commands.create_choice(
+                                        name='短くする(30文字以降省略)',
+                                        value='False')
+                                    ]),
         manage_commands.create_option(name='reply_is_hidden',
                                     description='Botの実行結果を全員に見せるどうか',
                                     option_type=3,
@@ -426,14 +440,18 @@ class LiveNotificationCog(commands.Cog):
                                         value='False')
                                     ])
     ])
-    async def live_notification_set_filterword(self, ctx, filterword:str = '', reply_is_hidden: str = 'True'):
+    async def live_notification_set_filterword(self, ctx, filterword:str = '', is_long_description:str = None, reply_is_hidden: str = 'True'):
         LOG.info('filterwordを設定するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
+        if is_long_description == 'True':
+            is_long_description = True
+        elif is_long_description == 'False':
+            is_long_description =  False
         if len(filterword) > self.FILTERWORD_MAX_SIZE:
             await ctx.send(f'filterwordは{self.FILTERWORD_MAX_SIZE}字以下で設定してください({len(filterword)}字設定しようとしています)', hidden = True) 
             return
-        result = await self.liveNotification.set_filterword(ctx.author.id, filterword)
+        result = await self.liveNotification.set_filterword(ctx.author.id, filterword, is_long_description)
         await ctx.send(result, hidden = hidden)
 
     def check_printer_is_running(self):

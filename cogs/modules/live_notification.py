@@ -64,6 +64,7 @@ class LiveNotification:
                                         discord_user_id integer,
                                         status text,
                                         filter_words text,
+                                        long_description text,
                                         created_at datetime,
                                         updated_at datetime
                                     )
@@ -130,6 +131,23 @@ class LiveNotification:
                 remind_param_twitcasting = (self.TWITCASTING, now, now)
                 cur.execute(insert_sql, remind_param_twitcasting)
                 conn.commit()
+
+        # userテーブルにlong_descriptionカラムがない場合、追加
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            alter_user_add_log_description_sql = '''alter table user add column 'long_description' '''
+            check_sql = '''PRAGMA table_info('user')'''
+            cur.execute(check_sql)
+            need_alter_table = True
+            result = cur.fetchall()
+            for column in result:
+                if column[1] == 'long_description':
+                    need_alter_table = False
+            if need_alter_table:
+                LOG.info('need_alter_table is ' + str(need_alter_table))
+                cur.execute(alter_user_add_log_description_sql)
 
         self.read()
         self.encode()
@@ -384,7 +402,7 @@ class LiveNotification:
 
     def get_user_filterword(self, conn, author_id):
         '''
-
+        フィルターワード、説明文の長さを取得
 
         Parameters
         ----------
@@ -397,16 +415,18 @@ class LiveNotification:
         -------
         filter_words: str
             フィルターワード
+        long_description: str
+            説明文を長くするか
         '''
-        select_user_filterword_sql = 'SELECT filter_words FROM user WHERE discord_user_id = ?'
+        select_user_filterword_sql = 'SELECT filter_words, long_description FROM user WHERE discord_user_id = ?'
         with conn:
             cur = conn.cursor()
             cur.execute(select_user_filterword_sql, (author_id,))
             fetch = cur.fetchone()
             if fetch is not None and len(fetch) > 0 and fetch[0] is not None:
-                return fetch[0]
+                return list(fetch)
             else:
-                return ''
+                return '',''
 
     def get_channel_id(self, conn, channel_id:str):
         '''
@@ -1328,7 +1348,7 @@ class LiveNotification:
             return message
         return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと\n　なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
 
-    async def set_filterword(self, author_id:int, filterword:str):
+    async def set_filterword(self, author_id:int, filterword:str, is_long_description:bool):
         '''
         フィルターワードを設定
 
@@ -1338,6 +1358,8 @@ class LiveNotification:
             discordのuser_id
         filterword: str
             フィルターワード
+        is_long_description: bool
+            説明短くするか
 
         Returns
         ----------
@@ -1345,18 +1367,38 @@ class LiveNotification:
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
-
+        now = datetime.datetime.now(self.JST)
         # 空文字が来た場合、現在のフィルターワードを返却する
-        if filterword == '':
-            db_filterword = self.get_user_filterword(conn, author_id)
-            return f'現在のfilterwordは「{db_filterword}」です'
+        db_filterword, db_log_description = self.get_user_filterword(conn, author_id)
+        long_description_message = '長い' if db_log_description == 'True' else '短い(30文字)'
+        if filterword == '' and is_long_description is None:
+            return f'現在のfilterwordは「{db_filterword}」、説明文(長さ)は{long_description_message}です'
+
+        # メッセージの投稿者からuser.idを取得
         user_id = self.get_user(conn, author_id)
-        with conn:
-            cur = conn.cursor()
-            update_param = (filterword, user_id)
-            update_sql = f'UPDATE user SET filter_words=? WHERE id = ?'
-            cur.execute(update_sql, update_param)
-        conn.commit()
+
+        # 説明文の短縮要否を設定
+        if is_long_description is not None:
+            long_description_message = '長い' if is_long_description else '短い(30文字)'
+            with conn:
+                cur = conn.cursor()
+                update_desc_sql = f'UPDATE user SET long_description = ?, updated_at = ? WHERE id = ?'
+                update_desc_param = (str(is_long_description), now, user_id)
+                cur.execute(update_desc_sql, update_desc_param)
+                conn.commit()
+
+    # フィルターワードがあれば、それを設定。説明文の設定も同様に指定
+        if filterword != '':
+            with conn:
+                cur = conn.cursor()
+                update_param = (filterword, now, user_id)
+                update_sql = f'UPDATE user SET filter_words = ?, updated_at = ? WHERE id = ?'
+                cur.execute(update_sql, update_param)
+                conn.commit()
+                filterword = f'に「{filterword}」を設定しました'
+        else:
+            # filterwordが空文字の場合、DBの文字列を表示
+            filterword = f'は現在「{db_filterword}」が設定されています'
         self.read()
         self.encode() 
         # Herokuの時のみ、チャンネルにファイルを添付する
@@ -1366,7 +1408,7 @@ class LiveNotification:
             message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
             LOG.error(message)
             return message
-        return f'filterword(author_id: {author_id}, user_id:{user_id}, filterword:{filterword})を設定しました'
+        return f'filterword{filterword}(説明文(長さ)は{long_description_message} / user_id:{user_id})'
 
     def _check_user_status(self, conn, author_id:int):
         '''
@@ -1417,3 +1459,27 @@ class LiveNotification:
             return '(なし)'
         else:
             return string[:length] + (syoryaku if string[length:] else '')
+
+    def make_description(self, description_text: str, title: str, is_long: bool=False, length: int=30):
+        '''
+        説明文を生成する(短くする)
+
+        Parameters
+        ----------
+        description_text: str
+            説明文
+        title: str
+            タイトル
+        is_long: bool
+            長くするかどうか
+        length: int
+            切り詰め後の長さ
+
+        Returns
+        ----------
+        string: str
+            説明文
+        '''
+        if not is_long:
+            return f'''{self._str_truncate(description_text, length)} by {title}'''
+        return f'''{description_text} by {title}'''
