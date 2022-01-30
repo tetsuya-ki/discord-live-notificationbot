@@ -913,14 +913,28 @@ class LiveNotification:
                     twicas_get_token_url = 'https://twitcasting.tv/happytoken.php'
                     form_data = aiohttp.FormData()
                     form_data.add_field(name='movie_id', value=twicas_latest_movie_id)
+                    temp_description = ''
                     async with aiohttp.ClientSession() as session:
                         async with session.post(twicas_get_token_url, data=form_data) as r:
                             if r.status == 200:
                                 twicas_get_token_response = await r.json()
                                 if twicas_get_token_response is not None and twicas_get_token_response.get('token') is not None:
-                                    twicas_viewer_url = f'https://frontendapi.twitcasting.tv/movies/{twicas_latest_movie_id}/status/viewer'
+                                    # ユーザーページを開き、タイトル、説明文を取得
+                                    twicas_user_url = f'https://twitcasting.tv/{channel_id}'
+                                    async with aiohttp.ClientSession() as session:
+                                        async with session.get(twicas_user_url) as r:
+                                            if r.status == 200:
+                                                html = await r.text()
+                                                match_object_title = re.search(r'<meta property="og:title" content="(.*)"/>', html)
+                                                if match_object_title is not None and len(match_object_title.groups()) >= 1:
+                                                    title = unescape(match_object_title.group(1))
+                                                match_object_description = re.search(r'<meta name="description"\n\s+content="(.*)"/>', html)
+                                                if match_object_description is not None and len(match_object_description.groups()) >= 1:
+                                                    temp_description = unescape(match_object_description.group(1))
+                                                    temp_description = re.sub(title+r'\s*/\s*', '', temp_description)
                                     token = twicas_get_token_response.get('token')
                                     params = {'token': token}
+                                    twicas_viewer_url = f'https://frontendapi.twitcasting.tv/movies/{twicas_latest_movie_id}/status/viewer'
                                     # 配信名など取得
                                     async with aiohttp.ClientSession() as session:
                                         async with session.get(twicas_viewer_url, params=params) as r:
@@ -946,8 +960,8 @@ class LiveNotification:
 
                     # 説明文の組み立て
                     twicas_viewer_movie_category = twicas_viewer_movie.get('category')
-                    temp_description = twicas_viewer_movie_category.get('name') if twicas_viewer_movie_category.get('name') is not None else ''
-                    temp_description = temp_description + f'''ピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
+                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category.get('name') is not None else temp_description
+                    temp_description = temp_description + f'''\nピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
                     description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
 
                     twicas_url = f'https://twitcasting.tv/{channel_id}/movie/{twicas_latest_movie_id}'
