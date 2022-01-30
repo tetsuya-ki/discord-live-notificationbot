@@ -553,6 +553,10 @@ class LiveNotification:
                     youtube_recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
                     youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
 
+                    # 何もないなら何もしない
+                    if youtube_recent_id is None:
+                        return
+
                     # 謎の削除かチェック
                     recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
                     started_at_text = response[7][6].text if len(response) > 7 and response[7][6] is not None else ''
