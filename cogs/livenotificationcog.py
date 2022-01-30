@@ -132,10 +132,10 @@ class LiveNotificationCog(commands.Cog):
     @cog_ext.cog_slash(
         name='live-notification_add',
         # guild_ids=guilds,
-        description='配信通知(YouTube,ニコ生)を作成する',
+        description='配信通知(YouTube,ニコ生,ツイキャス)を作成する',
         options=[
             manage_commands.create_option(name='live_channel_id',
-                                        description='YouTubeかニコ生のチャンネルID(＊非公開のニコ生コミュニティは登録失敗します)',
+                                        description='YouTubeかニコ生のチャンネルID、またはツイキャスユーザーID。もしくはURL(＊非公開のニコ生コミュニティは登録失敗します)',
                                         option_type=3,
                                         required=True),
             manage_commands.create_option(name='notification_chanel',

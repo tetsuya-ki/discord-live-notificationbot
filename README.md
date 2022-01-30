@@ -1,6 +1,6 @@
 # このBotについて
 
-- Discordで配信通知をするBotです(ニコ生とYouTubeにのみ対応)
+- Discordで配信通知をするBotです(ニコ生、YouTube、ツイキャスに対応)
 - スラッシュコマンド（[goverfl0w / discord-py-slash-command](https://github.com/goverfl0w/discord-interactions)）が使えるため、コマンドを覚える必要がなく、それぞれのオプションの意味が表示されます
 
 ## 機能
@@ -9,10 +9,14 @@
 
 - 配信通知を登録します
 - 必須のオプション(1つ)
-  - live_channel_id(配信通知対象のチャンネルID)
+  - live_channel_id(配信通知対象のチャンネルIDかURL)
     - ニコニコ生放送の場合は`coXXXXXX`の部分
       - coは省略可
+      - または、コミュニティのURL: `https://com.nicovideo.jp/community/coXXXXXX`
     - YouTubeの場合は、`UCxxxxxxx`の部分
+      - または、チャンネルのURL: `https://www.youtube.com/channel/UCxxxxxxx`
+    - ツイキャスの場合は、`xxxxxxx`の部分
+      - または、ユーザーページのURL: `https://twitcasting.tv/xxxxxxx`
 - オプション
   - notification_chanel(通知チャンネル)
     - #xxxxで指定したチャンネルに配信通知します
@@ -49,7 +53,11 @@
   - live_channel_id(配信通知対象のチャンネルID)
     - ニコニコ生放送の場合は`coXXXXXX`の部分
       - coは省略可
+      - または、コミュニティのURL: `https://com.nicovideo.jp/community/coXXXXXX`
     - YouTubeの場合は、`UCxxxxxxx`の部分
+      - または、チャンネルのURL: `https://www.youtube.com/channel/UCxxxxxxx`
+    - ツイキャスの場合は、`xxxxxxx`の部分
+      - または、ユーザーページのURL: `https://twitcasting.tv/xxxxxxx`
 - オプション
   - notification_chanel(通知先チャンネルID)
     - 配信通知対象のチャンネルIDに加え、削除対象の通知先チャンネルを設定できます(#general等。「DM」でBotとのDMが削除対象になります)
