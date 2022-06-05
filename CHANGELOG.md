@@ -9,6 +9,10 @@
 
 ### 機能追加
 
+- add: /live-notification_listにオプション追加(filter) 8af1a8cdab6397332f03bd79f8b5b1dd2b3f6e24
+  - filter(配信通知リストを検索)
+  - フィルタしたい文字列を入力すると、その文字列を含む配信通知のみ表示される
+
 ### 仕様変更
 
 - fix: 定期確認時の添付を1回に削減 966a4b5290e2911d895a9e0b936eeab01df4c5bf
