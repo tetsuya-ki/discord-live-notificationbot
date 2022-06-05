@@ -296,6 +296,10 @@ class LiveNotificationCog(commands.Cog):
                                             name='コマンドを実行するギルドへ登録した配信通知のみ表示',
                                             value='False')
                                         ]),
+            manage_commands.create_option(name='filter',
+                                        description='配信通知リストを検索',
+                                        option_type=3,
+                                        required=False),
             manage_commands.create_option(name='reply_is_hidden',
                                         description='Botの実行結果を全員に見せるどうか',
                                         option_type=3,
@@ -309,7 +313,7 @@ class LiveNotificationCog(commands.Cog):
                                             value='False')
                                         ])
         ])
-    async def live_notification_list(self, ctx, disp_all_flag:str = 'False', reply_is_hidden: str = 'True'):
+    async def live_notification_list(self, ctx, disp_all_flag:str = 'False', filter:str = '', reply_is_hidden: str = 'True'):
         LOG.info('live-notificationを確認するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
@@ -339,7 +343,12 @@ class LiveNotificationCog(commands.Cog):
                                 通知先: {result_dict.get('channel')}
                                 更新日時: {result_dict.get('updated_at')}
                                 '''
-                embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+                # filterが登録されている場合、message_rowに存在するもののみ表示する
+                if filter:
+                    if filter in message_row:
+                        embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+                else:
+                    embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
             await ctx.send('あなたの登録した配信通知はコチラです', embed=embed, hidden = hidden)
 
     @cog_ext.cog_slash(
