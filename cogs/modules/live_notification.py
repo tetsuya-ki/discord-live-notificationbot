@@ -989,7 +989,7 @@ class LiveNotification:
 
                     # 説明文の組み立て
                     twicas_viewer_movie_category = twicas_viewer_movie.get('category')
-                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category.get('name') is not None else temp_description
+                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category is not None and twicas_viewer_movie_category.get('name') is not None else temp_description
                     temp_description = temp_description + f'''\nピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
                     description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
 
