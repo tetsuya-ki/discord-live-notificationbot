@@ -4,40 +4,39 @@
 
 ## [Unreleased]
 
-- 以下のURLで求めてる
+- 以下のURLで把握しています
   - <https://github.com/tetsuya-ki/discord-live-notificationbot/compare/main...develop>
 
 ### 機能追加
 
 ### 仕様変更
 
-- fix: readの読み込み件数を修正(1,000件 -> 2,000件) 263989a8d40be9a8150384c65e2e89a3bdf95f94
-
+- fix: 定期確認時の添付を1回に削減 966a4b5290e2911d895a9e0b936eeab01df4c5bf
+  - get_xxxの添付部分を削除
+  - 更新件数をログに表示するよう変更
+- add: YouTubeのxmlが取得できなかった時ログ出力 40d68deffb55eb0fc7baeba2453397ba27d1d640
 - add: 配信通知の説明文を省略し、説明文省略の要否をコマンドで指定できるよう変更 b27a89552ce64dce0d2e1c6fba0eae861320d432
-
+- fix: readの読み込み件数を修正(1,000件 -> 2,000件) 263989a8d40be9a8150384c65e2e89a3bdf95f94
 - fix: タスクが多重起動しないように修正 194ca207c9b9280da1e57a14265124d26fc226ec
   - task_is_excutingがTrueの時、実行中。Falseの時は実行済
   - task_is_excutingがTrueの時は、他のタスクを起動しない
   - タスクの開始/終了をinfoログで出力させる
   - すでに起動が4回目の場合、次回から普通に動くようにする 839ddc24063381d490834cebbdfcd6a5ddaf1989
-
 - fix: 無駄にギルド名ログに出力していた点を修正 fd44980221553dcdf6494fe698a6d44ab202d342
-
-- YouTubeのxmlが取得できなかった時ログ出力 40d68deffb55eb0fc7baeba2453397ba27d1d640
 
 ### バグ修正
 
+- YouTube通知時の「謎の削除チェック」を一部変更 f095cfaaaae119c7ed5ad5f8c4a526ccb47e3b62
+  - 「配信前が登録されていた場合は先に進む」という条件を削除
+- ツイキャスのカテゴリなしに対応 55fae45b394c02a6fc6552611ba529f5ee085108
 - fix #15 786b82513e45f96a6881c946899c8177be0c5e87
   - 誰も配信通知を登録していないライブについては確認しないよう修正
 - fix #14 19e7894809518ae22d64b1c3b4c39647d1a0f5a8
   - YouTubeの最新動画がNoneの時は何もしない(チャンネルに動画が何もない等)
-- ツイキャスのカテゴリなしに対応 55fae45b394c02a6fc6552611ba529f5ee085108
-- YouTube通知時の「謎の削除チェック」を一部変更 f095cfaaaae119c7ed5ad5f8c4a526ccb47e3b62
-  - 「配信前が登録されていた場合は先に進む」という条件を削除
 
 ### その他
 
-- CHANGELOG.mdを追加 _commit_
+- CHANGELOG.mdを追加 0f92107bc57d31237fefd36f1cac5bdf1b0f8c2a
 
 ## [v0.7.0] - 2022-01-30
 
