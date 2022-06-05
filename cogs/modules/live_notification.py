@@ -699,6 +699,8 @@ class LiveNotification:
                         return message
 
                     return response_list
+                else:
+                    LOG.info(f'xml is not found.URL: {self.YOUTUBE_URL+channel_id}')
 
     async def set_nicolive(self, conn, channel_id:str):
         '''
