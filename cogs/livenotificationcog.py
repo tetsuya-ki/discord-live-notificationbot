@@ -52,6 +52,7 @@ class LiveNotificationCog(commands.Cog):
         else:
             self.task_is_excuting = True
 
+        update_count = 0
         # liveの分だけ確認していく
         for live in self.liveNotification.live_rows:
             if live['type_id'] == self.liveNotification.TYPE_YOUTUBE:
@@ -67,6 +68,7 @@ class LiveNotificationCog(commands.Cog):
             if result_dict_list is None or len(result_dict_list) == 0:
                 continue
             else:
+                update_count = update_count + 1
                 # notificationの分だけ確認していく
                 for notification in self.liveNotification.notification_rows:
                     if live['id'] == notification['live_id']:
@@ -144,8 +146,18 @@ class LiveNotificationCog(commands.Cog):
                                             LOG.error(msg)
                                             continue
                                         continue
+        else:
+            # 更新があった場合のみ、最後にデータ保存を実行
+            if update_count > 0:
+                    # Herokuの時のみ、チャンネルにファイルを添付する
+                    try:
+                        await self.liveNotification.set_discord_attachment_file()
+                    except discord.errors.Forbidden:
+                        message = f'＊＊＊{self.liveNotification.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                        LOG.error(message)
+
         # notificationを全て通知したら、ログを出力 & task_is_excutingをFalseにする
-        LOG.info(f'task is finished.')
+        LOG.info(f'task is finished. update count: {update_count}')
         self.task_is_excuting = False
 
     @cog_ext.cog_slash(

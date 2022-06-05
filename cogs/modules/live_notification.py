@@ -690,14 +690,6 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
-
                     return response_list
                 else:
                     LOG.info(f'xml is not found.URL: {self.YOUTUBE_URL+channel_id}')
@@ -808,13 +800,6 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
 
                     # ニコ生は地味にISOフォーマットではないので変換する(replace('+0900','+09:00'))
                     nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
@@ -934,13 +919,6 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
 
                     twicas_get_token_url = 'https://twitcasting.tv/happytoken.php'
                     form_data = aiohttp.FormData()
