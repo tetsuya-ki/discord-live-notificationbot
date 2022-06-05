@@ -3,6 +3,7 @@
 - Discordで配信通知をするBotです(ニコ生、YouTube、ツイキャスに対応)
 - スラッシュコマンド（[goverfl0w / discord-py-slash-command](https://github.com/goverfl0w/discord-interactions)）が使えるため、コマンドを覚える必要がなく、それぞれのオプションの意味が表示されます
   - 何も設定していない(デフォルトの)場合、配信通知の説明文が30文字以降は省略されます。変更したい場合は[`/live-notification_set-filterword`](#/live-notification_set-filterword)のオプションで長く表示させることができます(チャンネル単位で指定は現在不可)
+- 変更履歴は[tags](https://github.com/tetsuya-ki/discord-live-notificationbot/tags)か[CHANGELOG.md](/CHANGELOG.md)を確認ください
 
 ## 機能
 
