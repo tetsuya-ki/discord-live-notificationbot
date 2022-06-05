@@ -22,6 +22,7 @@ class LiveNotificationCog(commands.Cog):
         self.JST = timezone(timedelta(hours=+9), 'JST')
         self.FILTERWORD_MAX_SIZE = 1500
         self.task_is_excuting = False
+        self.kicked_count = 0
 
     # 読み込まれた時の処理
     @commands.Cog.listener()
@@ -41,7 +42,13 @@ class LiveNotificationCog(commands.Cog):
         # すでに起動していたら、何もしない
         if self.task_is_excuting:
             LOG.info(f'printer is already kicked.')
-            return
+            self.kicked_count = self.kicked_count + 1
+            if self.kicked_count > 3:
+                LOG.info(f'3 count is over!!!')
+                self.kicked_count = 0
+                self.task_is_excuting = False
+            else:
+                return
         else:
             self.task_is_excuting = True
 
