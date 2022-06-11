@@ -53,7 +53,7 @@ class DiscordLiveNotificationBot(commands.Bot):
 
     async def on_ready(self):
         LOG.info('We have logged in as {0.user}'.format(self))
-        LOG.info(f"### guilds ### \n{self.guilds}")
+        LOG.debug(f"### guilds ### \n{self.guilds}")
 
         # #### for delete slash command #####
         # guilds = [] if setting.ENABLE_SLASH_COMMAND_GUILD_ID_LIST is None else list(

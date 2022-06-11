@@ -21,6 +21,8 @@ class LiveNotificationCog(commands.Cog):
         self.liveNotification = LiveNotification(bot)
         self.JST = timezone(timedelta(hours=+9), 'JST')
         self.FILTERWORD_MAX_SIZE = 1500
+        self.task_is_excuting = False
+        self.kicked_count = 0
 
     # 読み込まれた時の処理
     @commands.Cog.listener()
@@ -37,7 +39,20 @@ class LiveNotificationCog(commands.Cog):
     async def printer(self):
         now = datetime.datetime.now(self.JST)
         LOG.debug(f'printer is kicked.({now})')
+        # すでに起動していたら、何もしない
+        if self.task_is_excuting:
+            LOG.info(f'printer is already kicked.')
+            self.kicked_count = self.kicked_count + 1
+            if self.kicked_count > 3:
+                LOG.info(f'3 count is over!!!')
+                self.kicked_count = 0
+                self.task_is_excuting = False
+            else:
+                return
+        else:
+            self.task_is_excuting = True
 
+        update_count = 0
         # liveの分だけ確認していく
         for live in self.liveNotification.live_rows:
             if live['type_id'] == self.liveNotification.TYPE_YOUTUBE:
@@ -53,6 +68,7 @@ class LiveNotificationCog(commands.Cog):
             if result_dict_list is None or len(result_dict_list) == 0:
                 continue
             else:
+                update_count = update_count + 1
                 # notificationの分だけ確認していく
                 for notification in self.liveNotification.notification_rows:
                     if live['id'] == notification['live_id']:
@@ -69,7 +85,9 @@ class LiveNotificationCog(commands.Cog):
                                 message = f'''{notification['name']}で{live['title']}さんの予約配信が追加されました！\n動画名: {video_title}'''
                                 if result_dict.get('live_streaming_start_datetime') is not None:
                                     message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
-                            description = f'''{result_dict.get('description')} by {live['title']}'''
+
+                            # 説明文短縮処理
+                            description = self.liveNotification.make_description(result_dict.get('description'), live['title'], notification['long_description'] == 'True')
 
                             # フィルター処理
                             if notification['filter_words'] is not None:
@@ -128,6 +146,19 @@ class LiveNotificationCog(commands.Cog):
                                             LOG.error(msg)
                                             continue
                                         continue
+        else:
+            # 更新があった場合のみ、最後にデータ保存を実行
+            if update_count > 0:
+                    # Herokuの時のみ、チャンネルにファイルを添付する
+                    try:
+                        await self.liveNotification.set_discord_attachment_file()
+                    except discord.errors.Forbidden:
+                        message = f'＊＊＊{self.liveNotification.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                        LOG.error(message)
+
+        # notificationを全て通知したら、ログを出力 & task_is_excutingをFalseにする
+        LOG.info(f'task is finished. update count: {update_count}')
+        self.task_is_excuting = False
 
     @cog_ext.cog_slash(
         name='live-notification_add',
@@ -265,6 +296,10 @@ class LiveNotificationCog(commands.Cog):
                                             name='コマンドを実行するギルドへ登録した配信通知のみ表示',
                                             value='False')
                                         ]),
+            manage_commands.create_option(name='filter',
+                                        description='配信通知リストを検索',
+                                        option_type=3,
+                                        required=False),
             manage_commands.create_option(name='reply_is_hidden',
                                         description='Botの実行結果を全員に見せるどうか',
                                         option_type=3,
@@ -278,7 +313,7 @@ class LiveNotificationCog(commands.Cog):
                                             value='False')
                                         ])
         ])
-    async def live_notification_list(self, ctx, disp_all_flag:str = 'False', reply_is_hidden: str = 'True'):
+    async def live_notification_list(self, ctx, disp_all_flag:str = 'False', filter:str = '', reply_is_hidden: str = 'True'):
         LOG.info('live-notificationを確認するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
@@ -308,7 +343,12 @@ class LiveNotificationCog(commands.Cog):
                                 通知先: {result_dict.get('channel')}
                                 更新日時: {result_dict.get('updated_at')}
                                 '''
-                embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+                # filterが登録されている場合、message_rowに存在するもののみ表示する
+                if filter:
+                    if filter in message_row:
+                        embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+                else:
+                    embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
             await ctx.send('あなたの登録した配信通知はコチラです', embed=embed, hidden = hidden)
 
     @cog_ext.cog_slash(
@@ -403,6 +443,18 @@ class LiveNotificationCog(commands.Cog):
                                     description='通知対象外とする文字列をコンマ区切りで指定(すべて削除は「,」のみ指定)',
                                     option_type=3,
                                     required=False),
+        manage_commands.create_option(name='is_long_description',
+                                    description='説明文を長くするかどうか',
+                                    option_type=3,
+                                    required=False,
+                                    choices=[
+                                        manage_commands.create_choice(
+                                        name='長くする',
+                                        value='True'),
+                                        manage_commands.create_choice(
+                                        name='短くする(30文字以降省略)',
+                                        value='False')
+                                    ]),
         manage_commands.create_option(name='reply_is_hidden',
                                     description='Botの実行結果を全員に見せるどうか',
                                     option_type=3,
@@ -416,14 +468,18 @@ class LiveNotificationCog(commands.Cog):
                                         value='False')
                                     ])
     ])
-    async def live_notification_set_filterword(self, ctx, filterword:str = '', reply_is_hidden: str = 'True'):
+    async def live_notification_set_filterword(self, ctx, filterword:str = '', is_long_description:str = None, reply_is_hidden: str = 'True'):
         LOG.info('filterwordを設定するぜ！')
         self.check_printer_is_running()
         hidden = True if reply_is_hidden == 'True' else False
+        if is_long_description == 'True':
+            is_long_description = True
+        elif is_long_description == 'False':
+            is_long_description =  False
         if len(filterword) > self.FILTERWORD_MAX_SIZE:
             await ctx.send(f'filterwordは{self.FILTERWORD_MAX_SIZE}字以下で設定してください({len(filterword)}字設定しようとしています)', hidden = True) 
             return
-        result = await self.liveNotification.set_filterword(ctx.author.id, filterword)
+        result = await self.liveNotification.set_filterword(ctx.author.id, filterword, is_long_description)
         await ctx.send(result, hidden = hidden)
 
     def check_printer_is_running(self):

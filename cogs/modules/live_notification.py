@@ -64,6 +64,7 @@ class LiveNotification:
                                         discord_user_id integer,
                                         status text,
                                         filter_words text,
+                                        long_description text,
                                         created_at datetime,
                                         updated_at datetime
                                     )
@@ -130,6 +131,23 @@ class LiveNotification:
                 remind_param_twitcasting = (self.TWITCASTING, now, now)
                 cur.execute(insert_sql, remind_param_twitcasting)
                 conn.commit()
+
+        # userテーブルにlong_descriptionカラムがない場合、追加
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            alter_user_add_log_description_sql = '''alter table user add column 'long_description' '''
+            check_sql = '''PRAGMA table_info('user')'''
+            cur.execute(check_sql)
+            need_alter_table = True
+            result = cur.fetchall()
+            for column in result:
+                if column[1] == 'long_description':
+                    need_alter_table = False
+            if need_alter_table:
+                LOG.info('need_alter_table is ' + str(need_alter_table))
+                cur.execute(alter_user_add_log_description_sql)
 
         self.read()
         self.encode()
@@ -309,7 +327,7 @@ class LiveNotification:
 
     def read(self):
         '''
-        ファイルを読み込む(先頭1,000件のみ)
+        ファイルを読み込む(先頭2,000件のみ)
 
         Parameters
         ----------
@@ -332,9 +350,14 @@ class LiveNotification:
                             '''
             LOG.debug(select_notification_sql)
             cur.execute(select_notification_sql)
-            self.notification_rows = cur.fetchmany(1000)
+            self.notification_rows = cur.fetchmany(2000)
 
-            select_live_sql = f'select * from live order by live.id'
+            select_live_sql = f'''
+                                select * from live
+                                where exists (
+                                    select 1 from notification where live.id = notification.live_id
+                                )
+                                order by live.id'''
             LOG.debug(select_live_sql)
             cur.execute(select_live_sql)
             self.live_rows = cur.fetchmany(1000)
@@ -379,7 +402,7 @@ class LiveNotification:
 
     def get_user_filterword(self, conn, author_id):
         '''
-
+        フィルターワード、説明文の長さを取得
 
         Parameters
         ----------
@@ -392,16 +415,18 @@ class LiveNotification:
         -------
         filter_words: str
             フィルターワード
+        long_description: str
+            説明文を長くするか
         '''
-        select_user_filterword_sql = 'SELECT filter_words FROM user WHERE discord_user_id = ?'
+        select_user_filterword_sql = 'SELECT filter_words, long_description FROM user WHERE discord_user_id = ?'
         with conn:
             cur = conn.cursor()
             cur.execute(select_user_filterword_sql, (author_id,))
             fetch = cur.fetchone()
             if fetch is not None and len(fetch) > 0 and fetch[0] is not None:
-                return fetch[0]
+                return list(fetch)
             else:
-                return ''
+                return '',''
 
     def get_channel_id(self, conn, channel_id:str):
         '''
@@ -553,14 +578,18 @@ class LiveNotification:
                     youtube_recent_id = response[7][1].text if len(response) > 7 and response[7] is not None else None
                     youtube_recent_url = response[7][4].attrib['href'] if len(response) > 7 and response[7][4] is not None else ''
 
+                    # 何もないなら何もしない
+                    if youtube_recent_id is None:
+                        return
+
                     # 謎の削除かチェック
                     recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
                     started_at_text = response[7][6].text if len(response) > 7 and response[7][6] is not None else ''
                     if started_at_text != '':
                         dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
                         dt_jst = dt_started_utc.astimezone(self.JST)
-                        # DBの最近の更新日時の方がxmlの最新よりも新しい場合は、削除か何かと判断し、対応しない(配信前が登録されていた場合は先に進む)
-                        if recent_updated_at >= dt_jst and recent_movie_length != 0:
+                        # DBの最近の更新日時の方がxmlの最新よりも新しい場合は、削除か何かと判断し、対応しない
+                        if recent_updated_at >= dt_jst:
                             return
 
                     # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
@@ -569,6 +598,7 @@ class LiveNotification:
                         or (recent_id == youtube_recent_id and recent_movie_length == 0):
                         youtube_recent_length = 0
                         try:
+                            LOG.info(f'try youtube_recent_id:{youtube_recent_id}')
                             youtube = YouTube(youtube_recent_url)
                             youtube_recent_length = youtube.length
                             if youtube_recent_length == 0:
@@ -660,15 +690,9 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
-
                     return response_list
+                else:
+                    LOG.info(f'xml is not found.URL: {self.YOUTUBE_URL+channel_id}')
 
     async def set_nicolive(self, conn, channel_id:str):
         '''
@@ -776,13 +800,6 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
 
                     # ニコ生は地味にISOフォーマットではないので変換する(replace('+0900','+09:00'))
                     nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
@@ -902,13 +919,6 @@ class LiveNotification:
                     conn.commit()
                     self.read()
                     self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
 
                     twicas_get_token_url = 'https://twitcasting.tv/happytoken.php'
                     form_data = aiohttp.FormData()
@@ -960,7 +970,7 @@ class LiveNotification:
 
                     # 説明文の組み立て
                     twicas_viewer_movie_category = twicas_viewer_movie.get('category')
-                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category.get('name') is not None else temp_description
+                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category is not None and twicas_viewer_movie_category.get('name') is not None else temp_description
                     temp_description = temp_description + f'''\nピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
                     description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
 
@@ -1319,7 +1329,7 @@ class LiveNotification:
             return message
         return f'配信通知({channel_id}(user_id:{user_id}, live_id:{live_id}))を削除しました\n＊{discord_channel}{live_title}({type_name})のこと\n　なお削除対象がなくても表示されるので、正確な情報は`/live-notification_list`で確認してください'
 
-    async def set_filterword(self, author_id:int, filterword:str):
+    async def set_filterword(self, author_id:int, filterword:str, is_long_description:bool):
         '''
         フィルターワードを設定
 
@@ -1329,6 +1339,8 @@ class LiveNotification:
             discordのuser_id
         filterword: str
             フィルターワード
+        is_long_description: bool
+            説明短くするか
 
         Returns
         ----------
@@ -1336,18 +1348,38 @@ class LiveNotification:
         '''
         self.decode()
         conn = sqlite3.connect(self.FILE_PATH)
-
+        now = datetime.datetime.now(self.JST)
         # 空文字が来た場合、現在のフィルターワードを返却する
-        if filterword == '':
-            db_filterword = self.get_user_filterword(conn, author_id)
-            return f'現在のfilterwordは「{db_filterword}」です'
+        db_filterword, db_log_description = self.get_user_filterword(conn, author_id)
+        long_description_message = '長い' if db_log_description == 'True' else '短い(30文字)'
+        if filterword == '' and is_long_description is None:
+            return f'現在のfilterwordは「{db_filterword}」、説明文(長さ)は{long_description_message}です'
+
+        # メッセージの投稿者からuser.idを取得
         user_id = self.get_user(conn, author_id)
-        with conn:
-            cur = conn.cursor()
-            update_param = (filterword, user_id)
-            update_sql = f'UPDATE user SET filter_words=? WHERE id = ?'
-            cur.execute(update_sql, update_param)
-        conn.commit()
+
+        # 説明文の短縮要否を設定
+        if is_long_description is not None:
+            long_description_message = '長い' if is_long_description else '短い(30文字)'
+            with conn:
+                cur = conn.cursor()
+                update_desc_sql = f'UPDATE user SET long_description = ?, updated_at = ? WHERE id = ?'
+                update_desc_param = (str(is_long_description), now, user_id)
+                cur.execute(update_desc_sql, update_desc_param)
+                conn.commit()
+
+    # フィルターワードがあれば、それを設定。説明文の設定も同様に指定
+        if filterword != '':
+            with conn:
+                cur = conn.cursor()
+                update_param = (filterword, now, user_id)
+                update_sql = f'UPDATE user SET filter_words = ?, updated_at = ? WHERE id = ?'
+                cur.execute(update_sql, update_param)
+                conn.commit()
+                filterword = f'に「{filterword}」を設定しました'
+        else:
+            # filterwordが空文字の場合、DBの文字列を表示
+            filterword = f'は現在「{db_filterword}」が設定されています'
         self.read()
         self.encode() 
         # Herokuの時のみ、チャンネルにファイルを添付する
@@ -1357,7 +1389,7 @@ class LiveNotification:
             message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
             LOG.error(message)
             return message
-        return f'filterword(author_id: {author_id}, user_id:{user_id}, filterword:{filterword})を設定しました'
+        return f'filterword{filterword}(説明文(長さ)は{long_description_message} / user_id:{user_id})'
 
     def _check_user_status(self, conn, author_id:int):
         '''
@@ -1408,3 +1440,27 @@ class LiveNotification:
             return '(なし)'
         else:
             return string[:length] + (syoryaku if string[length:] else '')
+
+    def make_description(self, description_text: str, title: str, is_long: bool=False, length: int=30):
+        '''
+        説明文を生成する(短くする)
+
+        Parameters
+        ----------
+        description_text: str
+            説明文
+        title: str
+            タイトル
+        is_long: bool
+            長くするかどうか
+        length: int
+            切り詰め後の長さ
+
+        Returns
+        ----------
+        string: str
+            説明文
+        '''
+        if not is_long:
+            return f'''{self._str_truncate(description_text, length)} by {title}'''
+        return f'''{description_text} by {title}'''
