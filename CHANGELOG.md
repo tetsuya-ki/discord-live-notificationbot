@@ -7,6 +7,8 @@
 - 以下のURLで把握しています
   - <https://github.com/tetsuya-ki/discord-live-notificationbot/compare/main...develop>
 
+## [v0.8.0] - 2022-06-12
+
 ### 機能追加
 
 - add: /live-notification_listにオプション追加(filter) 8af1a8cdab6397332f03bd79f8b5b1dd2b3f6e24
