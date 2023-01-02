@@ -46,6 +46,8 @@ def test():
                 root = ET.fromstring(text)
                 # for element in root.iter():
                 for entry in root.iter('{'+XML_NAMESPACE['atom']+'}entry'):
+                    if entry is None:
+                        continue
                     print('********************* element *********************')
                     author = entry.find('atom:author', XML_NAMESPACE)
                     videoId=entry.find('yt:videoId', XML_NAMESPACE).text
@@ -57,24 +59,42 @@ def test():
                     published=parse(entry.find('atom:published', XML_NAMESPACE).text).astimezone(gettz('Asia/Tokyo'))
                     updated=parse(entry.find('atom:updated', XML_NAMESPACE).text).astimezone(gettz('Asia/Tokyo'))
                     group = entry.find('media:group', XML_NAMESPACE)
-                    thumbnail=group.find('media:thumbnail', XML_NAMESPACE).get('url')
-                    description=group.find('media:description', XML_NAMESPACE).text
+                    thumbnail = ''
+                    description = ''
+                    if group:
+                        thumbnail=group.find('media:thumbnail', XML_NAMESPACE).get('url')
+                        description=group.find('media:description', XML_NAMESPACE).text
+                        print(f'thumbnail:{thumbnail}')
+                        print(f'description:{description}')
                     print(f'videoId:{videoId} from channelId:{channelId}')
                     print(f'title:{title} / link:{link}')
                     print(f'published:{published} / updated:{updated}')
-                    print(f'thumbnail:{thumbnail}')
-                    print(f'description:{description}')
                     live_streaming_start_datetime = ''
                     headers={"accept-language": "ja-JP"}
                     r = requests.get(link, headers=headers)
                     if r.status_code == 200:
                         html = r.text
+                        # live_streaming_start_datetime
                         match_object = re.search(r'"liveStreamOfflineSlateRenderer":{"scheduledStartTime":"(\d+)"', html)
                         if match_object is not None and len(match_object.groups()) >= 1:
                             liveStartTime = int(match_object.group(1))
                             dt = datetime.datetime.fromtimestamp(liveStartTime)
                             live_streaming_start_datetime = dt.strftime('%Y/%m/%d(%a) %H:%M:%S')
-                        print(f'live_streaming_start_datetime:{live_streaming_start_datetime}')
+                            print(f'live_streaming_start_datetime:{live_streaming_start_datetime}')
+                        # thumbnail
+                        match_object = re.search(r'"thumbnail":{"thumbnails":\[{"url":"(.+?)",', html)
+                        if match_object is not None and len(match_object.groups()) >= 1:
+                            thumbnail = match_object.group(1)
+                            print(f'thumbnail:{thumbnail}')
+                        match_object = re.search(r'"thumbnail":{"thumbnails":\[.+{"url":"(.+?)","width":1920,"height":1080}\]', html)
+                        if match_object is not None and len(match_object.groups()) >= 1:
+                            thumbnail = match_object.group(1)
+                            print(f'thumbnail:{thumbnail}')
+                        # description
+                        match_object = re.search(r'"shortDescription":"(.+?)",', html)
+                        if match_object is not None and len(match_object.groups()) >= 1:
+                            description = match_object.group(1)
+                            print(f'description:{description}')
 
                     print('********************* end *********************')
                     # 更新処理、通知
