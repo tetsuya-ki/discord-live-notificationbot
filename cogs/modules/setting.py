@@ -44,3 +44,8 @@ IS_HEROKU = if_env(os.environ.get('IS_HEROKU'))
 IS_REPLIT = if_env(os.environ.get('IS_REPLIT'))
 RESTRICT_ATTACHMENT_FILE = if_env(os.environ.get('RESTRICT_ATTACHMENT_FILE'))
 GUILD_ID_FOR_ATTACHMENTS = os.environ.get('GUILD_ID_FOR_ATTACHMENTS')
+YOUTUBE_FEEDS_URL = os.environ.get('YOUTUBE_FEEDS_URL')
+YOUTUBE_XML_URL = os.environ.get('YOUTUBE_XML_URL')
+YOUTUBE_VIDEO_URL = os.environ.get('YOUTUBE_VIDEO_URL')
+CALLBACK_URL = os.environ.get('CALLBACK_URL')
+

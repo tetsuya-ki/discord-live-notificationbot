@@ -7,7 +7,7 @@ from os.path import join, dirname
 from logging import getLogger
 from pytube import YouTube
 from .aes_angou import Aes_angou
-from . import setting
+from . import setting, pubsub_subscribe
 from xml.sax.saxutils import unescape
 
 import datetime, discord, sqlite3, os, pytube, re, requests
@@ -103,7 +103,18 @@ class LiveNotification:
                                         updated_at datetime
                                     )
                                     '''
-                sql_list = [create_table_user_sql, create_table_type_sql, create_table_live_sql, create_table_notification_sql]
+                create_table_live_youtube_sql = '''
+                                    create table if not exists live_youtube (
+                                        video_id text,
+                                        live_id integer,
+                                        status text,
+                                        title text,
+                                        scheduled_start_time datetime,
+                                        created_at datetime,
+                                        updated_at datetime
+                                    )
+                                    '''
+                sql_list = [create_table_user_sql, create_table_type_sql, create_table_live_sql, create_table_notification_sql, create_table_live_youtube_sql]
                 for create_table_sql in sql_list:
                     cur.execute(create_table_sql)
         else:
@@ -536,6 +547,8 @@ class LiveNotification:
             create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, recent_movie_length, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)'
             live_param = (self.TYPE_YOUTUBE, None, channel_id, recent_id, youtube_recent_length, title, now, now)
             cur.execute(create_live_sql, live_param)
+            # subscribe
+            await pubsub_subscribe.subscribe(channel_id)
             # get id
             get_id_sql = 'SELECT id FROM live WHERE rowid = last_insert_rowid()'
             cur.execute(get_id_sql)
@@ -544,7 +557,7 @@ class LiveNotification:
             conn.commit()
             return live_id,self.TYPE_YOUTUBE
 
-    async def get_youtube(self, channel_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
+    async def get_youtube_old(self, channel_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
         '''
         YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
 
@@ -698,6 +711,184 @@ class LiveNotification:
                         return message
 
                     return response_list
+
+    async def get_youtube(self, channel_id:str, video_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
+        '''
+        YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
+
+        Parameters
+        ----------
+        channel_id: str
+            YouTubeのchannel_id
+        video_id: str
+            対象のYouTubeの動画ID
+        recent_movie_length: int
+            最新のYouTubeの動画の長さ(未配信の予約配信の場合「0」になっている)
+        recent_updated_at: str
+            更新日時
+
+        Returns
+        -------
+        response_list: list(dict)
+            以下のdictを持つリスト
+                title: タイトル
+                raw_description: 元々の説明文
+                description: 説明文(前の説明と同じ場合省略される)
+                watch_url: 動画のURL
+                started_at: 動画の開始日時
+                thumbnail: 動画のサムネイル画像
+        '''
+        # xmlを確認
+        await self.get_youtube_and_write(channel_id, video_id)
+
+
+        response_list = []
+        for entry in response[7:]:
+            video_id = entry[1].text if entry[1] is not None else ''
+            # recent_idまで来るか、元々未配信だったものが配信され次の動画に来た場合か、通知最大件数を超えたら追加をやめる
+            if (recent_movie_length != 0 and recent_id == video_id) \
+                or (recent_movie_length == 0 and recent_id != video_id) \
+                or (len(response_list) > self.NOTIFICATION_MAX):
+                break
+            title = entry[3].text if entry[3] is not None else ''
+            watch_url = entry[4].attrib['href'] if entry[4] is not None else ''
+            started_at_text = entry[6].text if entry[6] is not None else ''
+            dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
+            dt_jst_text = dt_started_utc.astimezone(self.JST).strftime(self.DATETIME_FORMAT)
+
+            # media_groupに属する要素の処理
+            media_group = entry[8] if entry[8] is not None else None
+            thumbnail = ''
+            description = ''
+            if media_group is not None:
+                thumbnail = media_group[2].attrib['url'] if media_group[2] is not None else ''
+                media_group_3 = media_group[3].text if media_group[3] is not None else ''
+                description = self._str_truncate(media_group_3, self.DESCRIPTION_LENGTH, '(以下省略)')
+
+            # 前回と同じならメッセージを変更しておく
+            raw_description = description
+            if len(response_list) != 0 and response_list[-1].get('raw_description') == description:
+                description = '(1つ前と同じ説明文です)'
+            entry_dict = {'title': title
+                        ,'raw_description': raw_description
+                        ,'description': description
+                        ,'watch_url': watch_url
+                        ,'started_at': dt_jst_text
+                        ,'thumbnail': thumbnail}
+            response_list.append(entry_dict)
+
+        # recent_idの更新処理
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            update_recent_id_sql = 'UPDATE live SET recent_id = ?, recent_movie_length = ?, updated_at = ? WHERE channel_id = ?'
+            param = (video_id, youtube_recent_length, now, channel_id)
+            cur.execute(update_recent_id_sql, param)
+            # get id
+            get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
+            cur.execute(get_id_sql, (channel_id,))
+            live_id = cur.fetchone()[0]
+            LOG.info(f'live(id:{live_id}({channel_id}))のrecent_idを{video_id}に更新しました(更新前:{recent_id})')
+        conn.commit()
+        self.read()
+        self.encode()
+        return response_list
+
+    async def get_youtube_and_write(self, channel_id:str, video_id):
+        # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
+        youtube = None
+        youtube_url = setting.YOUTUBE_VIDEO_URL + video_id
+
+        # 実際にアクセスしてみて、動画情報を取得
+        liveStartTime = None
+        async with aiohttp.ClientSession() as session:
+            headers={"accept-language": "ja-JP"}
+            async with session.get(youtube_url, headers=headers) as r:
+                if r.status == 200:
+                    html = await r.text()
+                    # scheduledStartTime
+                    match_object = re.search(r'"liveStreamOfflineSlateRenderer":{"scheduledStartTime":"(\d+)"', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        liveStartTime = int(match_object.group(1))
+                        dt = datetime.datetime.fromtimestamp(liveStartTime)
+                        live_streaming_start_datetime = dt.strftime('%Y/%m/%d(%a) %H:%M:%S')
+                        LOG.debug(f'live_streaming_start_datetime:{live_streaming_start_datetime}')
+                    # thumbnail
+                    match_object = re.search(r'"thumbnail":{"thumbnails":\[{"url":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        thumbnail = match_object.group(1)
+                        LOG.debug(f'thumbnail:{thumbnail}')
+                    match_object = re.search(r'"thumbnail":{"thumbnails":\[.+{"url":"(.+?)","width":1920,"height":1080}\]', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        thumbnail = match_object.group(1)
+                        LOG.debug(f'thumbnail:{thumbnail}')
+                    # lengthSeconds
+                    match_object = re.search(r'"},"lengthSeconds":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        lengthSeconds = match_object.group(1)
+                        LOG.debug(f'lengthSeconds:{lengthSeconds}')
+                    # description
+                    match_object = re.search(r'"shortDescription":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        description = self._str_truncate(match_object.group(1), self.DESCRIPTION_LENGTH, '(以下省略)')
+                        LOG.debug(f'description:{description}')
+
+        # lengthSecondsが0の場合のみ、実際にストリーミングが開始しているか確認
+        if lengthSeconds and lengthSeconds == 0:
+            youtube_recent_length = 0
+            try:
+                youtube = YouTube(youtube_url)
+                youtube_recent_length = youtube.length
+                if youtube_recent_length == 0:
+                    youtube.streaming_data # 未配信の場合、Errorが発生
+                    youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
+            except:
+                LOG.info(f'youtube.streaming_data({video_id}) is None.')
+
+        # 最新動画の長さが0のまま変わってない場合は、対応なし
+        if not lengthSeconds or lengthSeconds == 0:
+            return
+
+        # recent_idの更新処理
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+
+            # 検索
+            select_video_id = 'select video_id FROM live_youtube WHERE video_id = ?'
+            param = (video_id,)
+            cur.execute(select_video_id, param)
+            live_youtube_id = cur.fetchone()[0]
+
+            # liveの更新
+            now = datetime.datetime.now(self.JST)
+            update_recent_id_sql = 'UPDATE live SET recent_id = ?, recent_movie_length = ?, updated_at = ? WHERE channel_id = ?'
+            param = (video_id, youtube_recent_length, now, channel_id)
+            cur.execute(update_recent_id_sql, param)
+            # get id
+            get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
+            cur.execute(get_id_sql, (channel_id,))
+            live_id = cur.fetchone()[0]
+            LOG.info(f'live(id:{live_id}({channel_id}))のrecent_idを{video_id}に更新しました')
+
+            # データがあれば更新、それ以外の場合は登録
+            if live_youtube_id:
+                # youtube_liveの更新
+                update_recent_id_sql = 'UPDATE live_youtube SET status = ?, scheduled_start_time = ?, updated_at = ? WHERE video_id = ?'
+                if youtube_recent_length and youtube_recent_length == 1:
+                    param = ('FIN', liveStartTime, now, video_id,)
+                else:
+                    param = (None, liveStartTime, now, video_id,)
+                cur.execute(update_recent_id_sql, param)
+            else:
+                insert_live_youtube_sql = 'INSERT INTO live_youtube (video_id,live_id,status,title,scheduled_start_time,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
+
+        conn.commit()
+        self.read()
+        self.encode()
 
     async def set_nicolive(self, conn, channel_id:str):
         '''
