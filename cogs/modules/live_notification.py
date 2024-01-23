@@ -10,7 +10,7 @@ from .aes_angou import Aes_angou
 from . import setting, pubsub_subscribe
 from xml.sax.saxutils import unescape
 
-import datetime, discord, sqlite3, os, pytube, re, requests
+import datetime, discord, sqlite3, os, re, requests
 LOG = getLogger('live-notification-bot')
 
 class LiveNotification:
@@ -18,18 +18,27 @@ class LiveNotification:
     FILE_PATH = join(dirname(__file__), 'files' + os.sep + DATABASE)
     JST = timezone(timedelta(hours=+9), 'JST')
     DATETIME_FORMAT = '%Y/%m/%d(%a) %H:%M:%S'
+    DATETIME_FORMAT_TZ = '%Y-%m-%dT%H:%M:%S%z'
+    DATETIME_FORMAT_DB = '%Y-%m-%d %H:%M:%S.%f%z'
     LIVE_CONTROL_CHANNEL = 'live_control_channel'
     YOUTUBE = 'YouTube'
     NICOLIVE = 'ニコ生'
     TWITCASTING = 'ツイキャス'
     YOUTUBE_URL = 'https://www.youtube.com/feeds/videos.xml?channel_id='
+    YOUTUBE_VIDEO_URL = 'https://www.youtube.com/watch?v='
+    YOUTUBE_URL_FOR_PUBSUB = 'https://www.youtube.com/xml/feeds/videos.xml?channel_id='
     TYPE_YOUTUBE = 1
     TYPE_NICOLIVE = 2
     TYPE_TWITCASTING = 3
     NOTIFICATION_MAX = 5
     STATUS_VALID = 'VALID'
     STATUS_INVALID = 'INVALID'
-    DESCRIPTION_LENGTH = 2000
+    LIVE_YOUTUBE_STATUS_DELIVERED = 'DELIVERED'
+    LIVE_YOUTUBE_STATUS_ERROR = 'ERROR'
+    LIVE_YOUTUBE_STATUS_UNDELIVERED = 'UNDELIVERED'
+    DESCRIPTION_LENGTH = 1000
+    SYSTEM_STATUS_DELETE = 'DELETE'
+    SYSTEM_STATUS_DELETED = 'DELETED'
 
     def __init__(self, bot):
         self.bot = bot
@@ -53,6 +62,19 @@ class LiveNotification:
         # Herokuの時のみ、チャンネルからファイルを取得する
         await self.get_discord_attachment_file()
 
+        # 何回か使うので...
+        create_table_live_youtube_sql = '''
+                    CREATE TABLE IF NOT EXISTS live_youtube (
+                        channel_id text,
+                        video_id text,
+                        status text,
+                        title text,
+                        scheduled_start_time datetime,
+                        created_at datetime,
+                        updated_at datetime
+                    )
+                    '''
+
         if not os.path.exists(self.aes.ENC_FILE_PATH):
             conn = sqlite3.connect(self.FILE_PATH)
             with conn:
@@ -65,6 +87,7 @@ class LiveNotification:
                                         status text,
                                         filter_words text,
                                         long_description text,
+                                        system_status test,
                                         created_at datetime,
                                         updated_at datetime
                                     )
@@ -99,17 +122,6 @@ class LiveNotification:
                                         notification_guild integer,
                                         notification_channel integer,
                                         mention text,
-                                        created_at datetime,
-                                        updated_at datetime
-                                    )
-                                    '''
-                create_table_live_youtube_sql = '''
-                                    create table if not exists live_youtube (
-                                        video_id text,
-                                        live_id integer,
-                                        status text,
-                                        title text,
-                                        scheduled_start_time datetime,
                                         created_at datetime,
                                         updated_at datetime
                                     )
@@ -160,6 +172,29 @@ class LiveNotification:
                 LOG.info('need_alter_table is ' + str(need_alter_table))
                 cur.execute(alter_user_add_log_description_sql)
 
+        # live_youtubeテーブルがない場合、追加
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            cur.execute(create_table_live_youtube_sql)
+
+        # userテーブルにsystem_statusカラムがない場合、追加
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            cur = conn.cursor()
+            now = datetime.datetime.now(self.JST)
+            alter_user_add_system_status_sql = '''alter table user add column 'system_status' '''
+            check_sql = '''PRAGMA table_info('user')'''
+            cur.execute(check_sql)
+            need_alter_table = True
+            result = cur.fetchall()
+            for column in result:
+                if column[1] == 'system_status':
+                    need_alter_table = False
+            if need_alter_table:
+                LOG.info('need_alter_table is ' + str(need_alter_table))
+                cur.execute(alter_user_add_system_status_sql)
+
         self.read()
         self.encode()
         LOG.info('準備完了')
@@ -187,11 +222,10 @@ class LiveNotification:
                 if setting.IS_HEROKU:
                     with open(file_path_first_time, 'w') as f:
                         now = datetime.datetime.now(self.JST)
-                        f.write(now.strftime('%Y/%m/%d(%a) %H:%M:%S'))
+                        f.write(now.strftime(self.DATETIME_FORMAT))
                         LOG.debug(f'{file_path_first_time}が存在しないので、作成を試みます')
                 attachment_file_date = None
 
-                # 
                 if self.saved_dm_guild is None:
                     LOG.error('環境変数に「GUILD_ID_FOR_ATTACHMENTS」が登録されていません（必須です！）')
                     raise discord.errors.InvalidArgument 
@@ -229,7 +263,7 @@ class LiveNotification:
                                         attachment_file_date = message_created_at_jst
                                         file_path = join(dirname(__file__), 'files' + os.sep + file_name)
                                         await message.attachments[0].save(file_path)
-                                        LOG.info(f'channel_file_save:{guild.name} / datetime:{attachment_file_date.strftime("%Y/%m/%d(%a) %H:%M:%S")}')
+                                        LOG.info(f'channel_file_save:{guild.name} / datetime:{attachment_file_date.strftime(self.DATETIME_FORMAT)}')
                                         break
                     else:
                         LOG.warning(f'{guild}: に所定のチャンネルがありません')
@@ -356,22 +390,24 @@ class LiveNotification:
             select_notification_sql = '''
                             select * from notification
                                 inner join type on notification.type_id = type.id
-                                inner join user on notification.user_id = user.id
+                                inner join user on notification.user_id = user.id and user.status = 'VALID'
                                 order by notification.id, user.id
                             '''
             LOG.debug(select_notification_sql)
             cur.execute(select_notification_sql)
-            self.notification_rows = cur.fetchmany(2000)
+            self.notification_rows = cur.fetchmany(3000)
 
             select_live_sql = f'''
                                 select * from live
                                 where exists (
-                                    select 1 from notification where live.id = notification.live_id
+                                    select 1 from notification
+                                    inner join user on notification.user_id = user.id and user.status = 'VALID'
+                                    where live.id = notification.live_id
                                 )
                                 order by live.id'''
             LOG.debug(select_live_sql)
             cur.execute(select_live_sql)
-            self.live_rows = cur.fetchmany(1000)
+            self.live_rows = cur.fetchmany(2000)
             LOG.debug(self.live_rows)
 
             LOG.info('＊＊＊＊＊＊読み込みが完了しました＊＊＊＊＊＊')
@@ -475,7 +511,7 @@ class LiveNotification:
     def get_channel_name(self, conn, channel_id:str):
         '''
         channel_idをもとに、live notification titleとtype_nameを取得
-        
+
         Parameters
         ----------
         conn: sqlite3.Connection
@@ -504,6 +540,73 @@ class LiveNotification:
                     return result[0]
             else:
                 return None,None
+
+    def get_live_youtube(self, channel_id:str):
+        '''
+        channel_idをもとに、live_youtubeを取得
+
+        Parameters
+        ----------
+        channel_id: str
+            channel_id(YouTubeのchannel_id)
+
+        Returns
+        -------
+        live_youtube: live_youtube
+            live_youtube
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            now = datetime.datetime.now(self.JST)
+            overdue_date = now + datetime.timedelta(days=-setting.OVERDUE_DATE_NUM)
+            overdue_date_ut = overdue_date.timestamp()
+            future_date = now + datetime.timedelta(hours=1)
+            future_date_ut = future_date.timestamp()
+
+            # 存在をチェック
+            select_live_youtube_sql = 'SELECT * FROM live_youtube WHERE channel_id=:channel_id AND scheduled_start_time>=:overdue_date AND scheduled_start_time<=:future_date AND status=:status'
+            cur = conn.cursor()
+            cur.execute(select_live_youtube_sql, {'channel_id':channel_id, 'overdue_date':overdue_date_ut, 'future_date':future_date_ut, 'status':self.LIVE_YOUTUBE_STATUS_UNDELIVERED})
+            result = cur.fetchall()
+
+        self.encode()
+        if len(result) != 0:
+            LOG.info(result)
+            return result
+        else:
+            return None
+
+    def select_live_youtube(self, channel_id:str, video_id:str):
+        '''
+        channel_id,video_idをもとに、live_youtubeを取得
+
+        Parameters
+        ----------
+        channel_id: str
+            channel_id(YouTubeのchannel_id)
+        video_id: str
+            video_id(YouTubeのvideo_id)
+
+        Returns
+        -------
+        live_youtube: live_youtube
+            live_youtube
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        with conn:
+            # 存在をチェック
+            select_live_youtube_sql = 'SELECT * FROM live_youtube WHERE channel_id=:channel_id AND video_id=:video_id'
+            cur = conn.cursor()
+            cur.execute(select_live_youtube_sql, {'channel_id':channel_id, 'video_id':video_id})
+            result = cur.fetchall()
+            LOG.debug(result)
+        self.encode()
+        if len(result) != 0:
+            return result[0]
+        else:
+            return None
 
     async def set_youtube(self, conn, channel_id:str):
         '''
@@ -547,8 +650,9 @@ class LiveNotification:
             create_live_sql = 'INSERT INTO live (type_id, live_author_id, channel_id, recent_id, recent_movie_length, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)'
             live_param = (self.TYPE_YOUTUBE, None, channel_id, recent_id, youtube_recent_length, title, now, now)
             cur.execute(create_live_sql, live_param)
-            # subscribe
-            await pubsub_subscribe.subscribe(channel_id)
+            if setting.LIVE_NOTIFICATION_V2:
+                # subscribe
+                await pubsub_subscribe.subscribe(channel_id)
             # get id
             get_id_sql = 'SELECT id FROM live WHERE rowid = last_insert_rowid()'
             cur.execute(get_id_sql)
@@ -582,6 +686,7 @@ class LiveNotification:
                 watch_url: 動画のURL
                 started_at: 動画の開始日時
                 thumbnail: 動画のサムネイル画像
+                recent_id: 最新のYouTubeの動画ID
         '''
         # xmlを確認
         async with aiohttp.ClientSession() as session:
@@ -596,7 +701,7 @@ class LiveNotification:
                         return
 
                     # 謎の削除かチェック
-                    recent_updated_at = datetime.datetime.strptime(recent_updated_at, '%Y-%m-%d %H:%M:%S.%f%z')
+                    recent_updated_at = datetime.datetime.strptime(recent_updated_at, self.DATETIME_FORMAT_DB)
                     started_at_text = response[7][6].text if len(response) > 7 and response[7][6] is not None else ''
                     if started_at_text != '':
                         dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
@@ -675,7 +780,8 @@ class LiveNotification:
                                     ,'description': description
                                     ,'watch_url': watch_url
                                     ,'started_at': dt_jst_text
-                                    , 'thumbnail': thumbnail}
+                                    ,'thumbnail': thumbnail
+                                    ,'recent_id': youtube_recent_id}
                         response_list.append(entry_dict)
 
                     # 最初の1つだけライブ配信開始フラグを入れる
@@ -712,108 +818,102 @@ class LiveNotification:
 
                     return response_list
 
-    async def get_youtube(self, channel_id:str, video_id:str, recent_id:str, recent_movie_length:int, recent_updated_at:str):
+    async def get_youtube(self, channel_id:str, video_id:str, updated:int=None, db_flg:bool=False):
         '''
-        YouTubeを確認します(recent_idと比較し、現在最新のrecent_idに更新し、存在しないものを通知対象として返却します)
+        YouTubeを確認します(予約リストを確認し、開始されているものを通知対象として返却します)
 
         Parameters
         ----------
         channel_id: str
             YouTubeのchannel_id
         video_id: str
-            対象のYouTubeの動画ID
-        recent_movie_length: int
-            最新のYouTubeの動画の長さ(未配信の予約配信の場合「0」になっている)
-        recent_updated_at: str
-            更新日時
+            YouTubeのvideo_id
+        updated: int
+            updated
+        db_flg: bool
+            DBからアクセスしているか否か(デフォルトはFalse)
 
         Returns
         -------
         response_list: list(dict)
             以下のdictを持つリスト
                 title: タイトル
-                raw_description: 元々の説明文
-                description: 説明文(前の説明と同じ場合省略される)
+                raw_description: 説明文(互換性維持のため同じものを入れている)
+                description: 説明文
                 watch_url: 動画のURL
                 started_at: 動画の開始日時
                 thumbnail: 動画のサムネイル画像
         '''
+        updated_at = None
+        if updated is not None:
+            updated_at = updated.strftime(self.DATETIME_FORMAT)
+        if not db_flg:
+            result = self.select_live_youtube(channel_id, video_id)
+            # 存在しない場合は、新規の情報がきた扱いとする
+            if not result:
+                LOG.info(f'<pubsub>channel_id:{channel_id}, video_id:{video_id}')
+            else:
+                # DBに存在し、DBのほうが新しい場合は無視
+                LOG.debug(f'''pubsub:{updated.strftime(self.DATETIME_FORMAT)}''')
+                db_updated_datetime = datetime.datetime.strptime(result[-1], self.DATETIME_FORMAT_DB)
+                LOG.debug(f'''DB    :{db_updated_datetime.strftime(self.DATETIME_FORMAT)}''')
+                # 1分以内は誤差と考える
+                db_updated_datetime = db_updated_datetime + timedelta(minutes=1)
+                if updated is not None and updated <= db_updated_datetime:
+                    LOG.info(f'DBのほうが新しいため却下:{video_id} ->{db_updated_datetime.strftime(self.DATETIME_FORMAT)}')
+                    return
+                # 配信済となっている場合は無視
+                if result[2] == self.LIVE_YOUTUBE_STATUS_DELIVERED:
+                    LOG.info(f'DBが配信済扱いのため却下:{video_id} ->{result[3]}')
+                    return
         # xmlを確認
-        await self.get_youtube_and_write(channel_id, video_id)
-
-
-        response_list = []
-        for entry in response[7:]:
-            video_id = entry[1].text if entry[1] is not None else ''
-            # recent_idまで来るか、元々未配信だったものが配信され次の動画に来た場合か、通知最大件数を超えたら追加をやめる
-            if (recent_movie_length != 0 and recent_id == video_id) \
-                or (recent_movie_length == 0 and recent_id != video_id) \
-                or (len(response_list) > self.NOTIFICATION_MAX):
-                break
-            title = entry[3].text if entry[3] is not None else ''
-            watch_url = entry[4].attrib['href'] if entry[4] is not None else ''
-            started_at_text = entry[6].text if entry[6] is not None else ''
-            dt_started_utc = datetime.datetime.fromisoformat(started_at_text)
-            dt_jst_text = dt_started_utc.astimezone(self.JST).strftime(self.DATETIME_FORMAT)
-
-            # media_groupに属する要素の処理
-            media_group = entry[8] if entry[8] is not None else None
-            thumbnail = ''
-            description = ''
-            if media_group is not None:
-                thumbnail = media_group[2].attrib['url'] if media_group[2] is not None else ''
-                media_group_3 = media_group[3].text if media_group[3] is not None else ''
-                description = self._str_truncate(media_group_3, self.DESCRIPTION_LENGTH, '(以下省略)')
-
-            # 前回と同じならメッセージを変更しておく
-            raw_description = description
-            if len(response_list) != 0 and response_list[-1].get('raw_description') == description:
-                description = '(1つ前と同じ説明文です)'
-            entry_dict = {'title': title
-                        ,'raw_description': raw_description
-                        ,'description': description
-                        ,'watch_url': watch_url
-                        ,'started_at': dt_jst_text
-                        ,'thumbnail': thumbnail}
-            response_list.append(entry_dict)
-
-        # recent_idの更新処理
-        self.decode()
-        conn = sqlite3.connect(self.FILE_PATH)
-        with conn:
-            cur = conn.cursor()
-            now = datetime.datetime.now(self.JST)
-            update_recent_id_sql = 'UPDATE live SET recent_id = ?, recent_movie_length = ?, updated_at = ? WHERE channel_id = ?'
-            param = (video_id, youtube_recent_length, now, channel_id)
-            cur.execute(update_recent_id_sql, param)
-            # get id
-            get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
-            cur.execute(get_id_sql, (channel_id,))
-            live_id = cur.fetchone()[0]
-            LOG.info(f'live(id:{live_id}({channel_id}))のrecent_idを{video_id}に更新しました(更新前:{recent_id})')
-        conn.commit()
-        self.read()
-        self.encode()
+        response_list = await self.get_youtube_and_write(channel_id, video_id, updated_at)
         return response_list
 
-    async def get_youtube_and_write(self, channel_id:str, video_id):
+    async def get_youtube_and_write(self, channel_id:str, video_id:str, updated_at_by_page:str=''):
         # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
         youtube = None
-        youtube_url = setting.YOUTUBE_VIDEO_URL + video_id
+        youtube_url = self.get_youtube_url(video_id)
+
+        # 初期化
+        liveStartTime,title,lengthSeconds,publish_datetime_str,live_streaming_start_datetime,live_streaming_start_jst,live_streaming_end_datetime = None,None,None,None,None,None,None
+        description,author = '',''
+        isLiveNow = False
 
         # 実際にアクセスしてみて、動画情報を取得
-        liveStartTime = None
         async with aiohttp.ClientSession() as session:
             headers={"accept-language": "ja-JP"}
             async with session.get(youtube_url, headers=headers) as r:
                 if r.status == 200:
-                    html = await r.text()
-                    # scheduledStartTime
+                    html_raw = await r.text()
+                    html = html_raw.replace('\u3000','  ').replace('\u200d',' ').replace('\u200D',' ').replace('\\u0026','&')
+                    if html_raw != html:
+                        LOG.info('html変換実施')
+                    # title
+                    match_object = re.search(r'"title":{"simpleText":"(.+?)"}', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        title = match_object.group(1)
+                        LOG.debug(f'title:{title}')
+                    # author
+                    match_object = re.search(r'"viewCount":"\d+?","author":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        author = match_object.group(1)
+                        LOG.debug(f'author:{author}')
+                    # scheduledStartTime startTimestamp":"2023-11-19T05:17:18+00:00"},
                     match_object = re.search(r'"liveStreamOfflineSlateRenderer":{"scheduledStartTime":"(\d+)"', html)
+                    match_object2 = re.search(r'"startTimestamp":"(.+?)"\}?,', html)
                     if match_object is not None and len(match_object.groups()) >= 1:
                         liveStartTime = int(match_object.group(1))
                         dt = datetime.datetime.fromtimestamp(liveStartTime)
-                        live_streaming_start_datetime = dt.strftime('%Y/%m/%d(%a) %H:%M:%S')
+                        live_streaming_start_jst = dt.astimezone(self.JST)
+                        live_streaming_start_datetime = dt.strftime(self.DATETIME_FORMAT)
+                        LOG.debug(f'live_streaming_start_datetime:{live_streaming_start_datetime}')
+                    elif match_object2 is not None and len(match_object2.groups()) >= 1:
+                        liveStartTime_mo = match_object2.group(1)
+                        live_streaming_start = datetime.datetime.strptime(liveStartTime_mo, self.DATETIME_FORMAT_TZ)
+                        live_streaming_start_jst = live_streaming_start.astimezone(self.JST)
+                        liveStartTime = int(live_streaming_start_jst.timestamp())
+                        live_streaming_start_datetime = live_streaming_start_jst.strftime(self.DATETIME_FORMAT)
                         LOG.debug(f'live_streaming_start_datetime:{live_streaming_start_datetime}')
                     # thumbnail
                     match_object = re.search(r'"thumbnail":{"thumbnails":\[{"url":"(.+?)",', html)
@@ -827,68 +927,202 @@ class LiveNotification:
                     # lengthSeconds
                     match_object = re.search(r'"},"lengthSeconds":"(.+?)",', html)
                     if match_object is not None and len(match_object.groups()) >= 1:
-                        lengthSeconds = match_object.group(1)
-                        LOG.debug(f'lengthSeconds:{lengthSeconds}')
+                        lengthSecondsStr = match_object.group(1)
+                        lengthSeconds = int(lengthSecondsStr) if type(lengthSecondsStr) is str else lengthSecondsStr
+                        LOG.debug(f'lengthSeconds:{lengthSecondsStr}')
                     # description
                     match_object = re.search(r'"shortDescription":"(.+?)",', html)
                     if match_object is not None and len(match_object.groups()) >= 1:
                         description = self._str_truncate(match_object.group(1), self.DESCRIPTION_LENGTH, '(以下省略)')
                         LOG.debug(f'description:{description}')
+                    # publishDate
+                    match_object = re.search(r'"publishDate":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        publishDate = match_object.group(1)
+                        publish_datetime = datetime.datetime.strptime(publishDate, self.DATETIME_FORMAT_TZ)
+                        publish_datetime_jst = publish_datetime.astimezone(self.JST)
+                        publish_datetime_str = publish_datetime_jst.strftime(self.DATETIME_FORMAT)
+                        LOG.info(f'publishDate:{publish_datetime_str}')
+                    # isLiveNow
+                    match_object = re.search(r'"isLiveNow":(.+?)\}?,', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        isLiveNowStr = match_object.group(1)
+                        if isLiveNowStr is not None and type(isLiveNowStr) is str:
+                            isLiveNow = True if isLiveNowStr.upper() == 'TRUE' else False
+                        LOG.info(f'isLiveNow:{isLiveNowStr}')
+                    match_object = re.search(r'"endTimestamp":"(.+?)"\}?,', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        striemingEndTime = match_object.group(1)
+                        live_streaming_end = datetime.datetime.strptime(striemingEndTime, self.DATETIME_FORMAT_TZ)
+                        live_streaming_end_jst = live_streaming_end.astimezone(self.JST)
+                        live_streaming_end_datetime = live_streaming_end_jst.strftime(self.DATETIME_FORMAT)
 
+        # publishDateが古いものは対象外にする
+        now = datetime.datetime.now(self.JST)
+        days_1_ago = now - timedelta(days=1)
+        if publish_datetime_str:
+            if isLiveNow:
+                LOG.info(f'ライブ中のためチェック(video_id: {video_id}, 開始時刻:{live_streaming_start_datetime})')
+            elif live_streaming_start_jst is not None and live_streaming_start_jst > days_1_ago:
+                LOG.info(f'開始時間が最近のためチェック(video_id: {video_id}, 開始時刻:{live_streaming_start_datetime})')
+            elif publish_datetime_jst < days_1_ago:
+                msg = f'1日以上古いため対応不要(video_id: {video_id}, publishDate:{publish_datetime_str})'
+                if live_streaming_start_jst is not None:
+                    msg += f', live_streaming_start_jst:{live_streaming_start_jst}'
+                LOG.info(msg)
+                return
+            else:
+                # TODO:デバッグ用のため、後で消す
+                LOG.info(f'古くない:(video_id: {video_id}, publishDate:{publish_datetime_str})')
+
+        update_flg = False
         # lengthSecondsが0の場合のみ、実際にストリーミングが開始しているか確認
-        if lengthSeconds and lengthSeconds == 0:
-            youtube_recent_length = 0
+        LOG.debug('length............')
+        live_streaming_start_flg = None
+        youtube_recent_length = lengthSeconds
+        # 画面上でライブ中になっている場合配信中扱い
+        if isLiveNow:
+            youtube_recent_length = 1
+            live_streaming_start_flg = True
+            LOG.info(f'ライブ中: {youtube_url}')
+            update_flg = True
+        # 以下は不要かもしれないが、念の為チェック
+        elif youtube_recent_length is not None and (youtube_recent_length == 0 or youtube_recent_length == '0'):
             try:
+                LOG.info('youtube_check............')
                 youtube = YouTube(youtube_url)
                 youtube_recent_length = youtube.length
                 if youtube_recent_length == 0:
                     youtube.streaming_data # 未配信の場合、Errorが発生
                     youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
+                    live_streaming_start_flg = True
+                    LOG.info('youtube_check_1')
+                    update_flg = True
+                else:
+                    update_flg = True
+                    LOG.info('youtube_check_2')
             except:
                 LOG.info(f'youtube.streaming_data({video_id}) is None.')
+                live_streaming_start_flg = False
 
-        # 最新動画の長さが0のまま変わってない場合は、対応なし
-        if not lengthSeconds or lengthSeconds == 0:
-            return
+        NOTIF = None
+        try:
+            # recent_idの更新処理
+            self.decode()
+            conn = sqlite3.connect(self.FILE_PATH)
+            LOG.debug('conn')
+            with conn:
+                cur = conn.cursor()
 
-        # recent_idの更新処理
-        self.decode()
-        conn = sqlite3.connect(self.FILE_PATH)
-        with conn:
-            cur = conn.cursor()
+                # 検索
+                select_live_id = 'select updated_at FROM live WHERE recent_id = ?'
+                param = (video_id,)
+                cur.execute(select_live_id, param)
+                row = cur.fetchone()
+                updated_at = row[0] if row else None
 
-            # 検索
-            select_video_id = 'select video_id FROM live_youtube WHERE video_id = ?'
-            param = (video_id,)
-            cur.execute(select_video_id, param)
-            live_youtube_id = cur.fetchone()[0]
+                select_live_youtube_status = 'select status, scheduled_start_time FROM live_youtube WHERE video_id = ?'
+                param = (video_id,)
+                cur.execute(select_live_youtube_status, param)
+                row = cur.fetchone()
+                live_youtube_status = row[0] if row else None
+                scheduled_start_time = row[1] if row else None
+                # live_youtubeが取得できた場合
+                if live_youtube_status is not None:
+                    LOG.info(f'live_youtube_status:{live_youtube_status}')
+                    # DELIVEREDされており、updateもあれば通知済
+                    if updated_at is not None \
+                    and live_youtube_status == self.LIVE_YOUTUBE_STATUS_DELIVERED \
+                    and scheduled_start_time == liveStartTime:
+                        LOG.info(f'通知済: {video_id} -> {updated_at}')
+                        return
 
-            # liveの更新
-            now = datetime.datetime.now(self.JST)
-            update_recent_id_sql = 'UPDATE live SET recent_id = ?, recent_movie_length = ?, updated_at = ? WHERE channel_id = ?'
-            param = (video_id, youtube_recent_length, now, channel_id)
-            cur.execute(update_recent_id_sql, param)
-            # get id
-            get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
-            cur.execute(get_id_sql, (channel_id,))
-            live_id = cur.fetchone()[0]
-            LOG.info(f'live(id:{live_id}({channel_id}))のrecent_idを{video_id}に更新しました')
+                # recent_idが違う場合のみ、liveを更新
+                now = datetime.datetime.now(self.JST)
+                if updated_at is None:
+                    # liveの更新
+                    update_recent_id_sql = 'UPDATE live SET recent_id = ?, recent_movie_length = ?, updated_at = ? WHERE channel_id = ?'
+                    param = (video_id, youtube_recent_length, now, channel_id)
+                    cur.execute(update_recent_id_sql, param)
+                    # get id
+                    get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
+                    cur.execute(get_id_sql, (channel_id,))
+                    live_id = cur.fetchone()[0]
+                    LOG.info(f'live(id:{live_id}({channel_id}))のrecent_idを{video_id}に更新しました')
 
-            # データがあれば更新、それ以外の場合は登録
-            if live_youtube_id:
-                # youtube_liveの更新
-                update_recent_id_sql = 'UPDATE live_youtube SET status = ?, scheduled_start_time = ?, updated_at = ? WHERE video_id = ?'
-                if youtube_recent_length and youtube_recent_length == 1:
-                    param = ('FIN', liveStartTime, now, video_id,)
+                # live_youtubeについて、データがあれば更新、それ以外の場合は登録
+                if live_youtube_status is not None:
+                    # 開始予定日時変更文言
+                    scheduled_time = ''
+                    if scheduled_start_time != liveStartTime:
+                        scheduled_time = f'(変更あり:{str(scheduled_start_time)} -> {str(liveStartTime)})'
+                    elif live_youtube_status == self.LIVE_YOUTUBE_STATUS_UNDELIVERED and not isLiveNow:
+                        LOG.info(f'更新不要: {video_id}')
+                        return
+                    # youtube_liveの更新
+                    LOG.debug('!!!!!!youtube_liveの更新!!!!!!')
+                    update_recent_id_sql = 'UPDATE live_youtube SET status = ?, scheduled_start_time = ?, updated_at = ? WHERE video_id = ?'
+                    if youtube_recent_length and youtube_recent_length > 0:
+                        param = (self.LIVE_YOUTUBE_STATUS_DELIVERED, liveStartTime, now, video_id,)
+                        LOG.info(f'live_youtube(id:{video_id}({channel_id}))を{self.LIVE_YOUTUBE_STATUS_DELIVERED}に更新しました{scheduled_time}')
+                        NOTIF = '更新(開始)'
+                    else:
+                        param = (self.LIVE_YOUTUBE_STATUS_UNDELIVERED, liveStartTime, now, video_id,)
+                        LOG.info(f'live_youtube(id:{video_id}({channel_id}))を{self.LIVE_YOUTUBE_STATUS_UNDELIVERED}に更新しました{scheduled_time}')
+                        NOTIF = '更新(何か変更)'
+                    cur.execute(update_recent_id_sql, param)
+                    conn.commit()
                 else:
-                    param = (None, liveStartTime, now, video_id,)
-                cur.execute(update_recent_id_sql, param)
-            else:
-                insert_live_youtube_sql = 'INSERT INTO live_youtube (video_id,live_id,status,title,scheduled_start_time,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
+                    LOG.debug('!!!!!!youtube_liveの追加!!!!!!')
+                    insert_live_youtube_sql = 'INSERT INTO live_youtube (channel_id,video_id,status,title,scheduled_start_time,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
+                    if youtube_recent_length and youtube_recent_length > 0 \
+                    and (live_streaming_start_jst is None or (live_streaming_start_jst is not None and live_streaming_start_jst <= now)):
+                        insert_param = (channel_id, video_id, self.LIVE_YOUTUBE_STATUS_DELIVERED, title, liveStartTime, now, now)
+                        NOTIF = '追加(開始)'
+                    else:
+                        live_streaming_start_flg = False
+                        LOG.debug('!!!!!!youtube_liveの追加(0sec)!!!!!!')
+                        insert_param = (channel_id, video_id, self.LIVE_YOUTUBE_STATUS_UNDELIVERED, title, liveStartTime, now, now)
+                        NOTIF = '追加(予約)'
+                    cur.execute(insert_live_youtube_sql, insert_param)
+                    conn.commit()
+        finally:
+            # 更新が発生していた場合のみ、再読み込み
+            if NOTIF:
+                self.read()
+            self.encode()
+            LOG.debug('!!!!!!db end!!!!!!')
 
-        conn.commit()
-        self.read()
-        self.encode()
+        # 定期更新処理の場合(その場合、updated_atがNone)、ライブ再生開始じゃない場合は無視
+        if updated_at_by_page is None and not update_flg:
+            LOG.info('定期更新処理の場合、ライブ開始ではないパターンは通知なし')
+            self.encode()
+            return
+        LOG.debug('!!!!!!return!!!!!!')
+        # update_atをうめる
+        if updated_at_by_page is None:
+            if live_streaming_end_datetime is not None:
+                updated_at_by_page = live_streaming_end_datetime
+            elif live_streaming_start_datetime is not None:
+                updated_at_by_page = live_streaming_start_datetime
+            else:
+                updated_at_by_page = publish_datetime_str
+        LOG.info(f'{video_id}は何かしら通知されるはず！ -> {NOTIF}')
+        return [{
+            'title': title
+            ,'raw_description': description
+            ,'description': description
+            ,'watch_url': youtube_url
+            ,'started_at': live_streaming_start_datetime
+            ,'thumbnail': thumbnail
+            ,'live_streaming_start_flg': live_streaming_start_flg
+            ,'channel_id': channel_id
+            ,'author': author
+            ,'updated_at': updated_at_by_page
+            }]
+
+    def get_youtube_url(self, video_id):
+        return self.YOUTUBE_VIDEO_URL + video_id
 
     async def set_nicolive(self, conn, channel_id:str):
         '''
@@ -908,7 +1142,6 @@ class LiveNotification:
         type_id: int
             登録したlive notificationのtype_id(ニコ生のため、「2」)
         '''
-        # json
         channel_id = channel_id.replace('co', '')
         nico_communities_url = f'https://com.nicovideo.jp/api/v1/communities/{channel_id}/lives.json?limit=1&offset=0'
         async with aiohttp.ClientSession() as session:
@@ -962,6 +1195,7 @@ class LiveNotification:
                 description: 説明文(前の説明と同じ場合省略される)
                 watch_url: 動画のURL
                 started_at: 動画の開始日時
+                recent_id: 最新の動画ID
         '''
         # json
         nico_live_url = f'https://com.nicovideo.jp/api/v1/communities/{channel_id}/lives/onair.json'
@@ -1016,7 +1250,9 @@ class LiveNotification:
                     return [{'title': str(nico_live_response['data']['live']['title'])
                             ,'description': str(description)
                             ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
-                            ,'started_at': dt_jst_text}]
+                            ,'started_at': dt_jst_text
+                            ,'recent_id': nico_live_id
+                            }]
 
     async def set_twitcasting(self, conn, channel_id:str):
         '''
@@ -1088,6 +1324,7 @@ class LiveNotification:
                 watch_url: 動画のURL
                 started_at: 動画の開始日時
                 thumbnail: 動画のサムネイル画像(あれば)
+                recent_id: 最新の動画ID
         '''
         # json
         twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
@@ -1180,7 +1417,7 @@ class LiveNotification:
 
                     # 説明文の組み立て
                     twicas_viewer_movie_category = twicas_viewer_movie.get('category')
-                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category.get('name') is not None else temp_description
+                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category is not None and twicas_viewer_movie_category.get('name') is not None else temp_description
                     temp_description = temp_description + f'''\nピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
                     description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
 
@@ -1188,7 +1425,8 @@ class LiveNotification:
                     twicas_dict = {'title': title
                                     ,'description': str(description)
                                     ,'watch_url': twicas_url
-                                    ,'started_at': dt_jst_text}
+                                    ,'started_at': dt_jst_text
+                                    ,'recent_id': str(twicas_latest_movie_id)}
                     if thumbnail:
                         twicas_dict['thumbnail'] = thumbnail
 
@@ -1282,13 +1520,26 @@ class LiveNotification:
             user_id = self.get_user(conn, author_id)
             live_id,type_id = self.get_channel_id(conn, channel_id)
             if live_id is None:
-                # YouTube
+                # YouTube @xxxxの変換、その後、チャンネル確認
+                match_object = re.search(r'https://www.youtube.com/@(.+)$', channel_id)
+                if match_object is not None and len(match_object.groups()) >= 1:
+                    LOG.debug(f'変換前->channel_id: {channel_id}')
+                    async with aiohttp.ClientSession() as session:
+                        headers={"accept-language": "ja-JP"}
+                        async with session.get(match_object.group(0), headers=headers) as r:
+                            if r.status == 200:
+                                html = await r.text()
+                                match_object2 = re.search(r'"channelUrl":"(https://www.youtube.com/channel/.+?)"', html)
+                                if match_object2 is not None and len(match_object2.groups()) >= 1:
+                                    channel_id = match_object2.group(1)
+                                    LOG.debug(f'変換後->channel_id: {channel_id}')
                 match_object = re.search(r'https://www.youtube.com/channel/(.+)$', channel_id)
                 if match_object is not None and len(match_object.groups()) >= 1:
                     live_id,type_id = self.get_channel_id(conn, match_object.group(1))
                     channel_id = match_object.group(1)
                     if live_id is None:
                         live_id,type_id = await self.set_youtube(conn, channel_id)
+                # 下のelseはなんの意味があるんだ？(以降のやつも同じ...)
                 else:
                     live_id,type_id = await self.set_youtube(conn, channel_id)
                 if live_id is None:
@@ -1499,6 +1750,19 @@ class LiveNotification:
         conn = sqlite3.connect(self.FILE_PATH)
         user_id = self.get_user(conn, author_id)
 
+        # YouTube @xxxxの変換、その後、チャンネル確認
+        match_object = re.search(r'https://www.youtube.com/@(.+)$', channel_id)
+        if match_object is not None and len(match_object.groups()) >= 1:
+            LOG.debug(f'変換前->channel_id: {channel_id}')
+            async with aiohttp.ClientSession() as session:
+                headers={"accept-language": "ja-JP"}
+                async with session.get(match_object.group(0), headers=headers) as r:
+                    if r.status == 200:
+                        html = await r.text()
+                        match_object2 = re.search(r'"channelUrl":"(https://www.youtube.com/channel/.+?)"', html)
+                        if match_object2 is not None and len(match_object2.groups()) >= 1:
+                            channel_id = match_object2.group(1)
+                            LOG.debug(f'変換後->channel_id: {channel_id}')
         # URLから変換
         match_object_youtube = re.search(r'https://www.youtube.com/channel/(.+)$', channel_id)
         match_object_nicovideo = re.search(r'https://com.nicovideo.jp/community/(.+)$', channel_id)
@@ -1591,7 +1855,7 @@ class LiveNotification:
             # filterwordが空文字の場合、DBの文字列を表示
             filterword = f'は現在「{db_filterword}」が設定されています'
         self.read()
-        self.encode() 
+        self.encode()
         # Herokuの時のみ、チャンネルにファイルを添付する
         try:
             await self.set_discord_attachment_file()
@@ -1600,6 +1864,48 @@ class LiveNotification:
             LOG.error(message)
             return message
         return f'filterword{filterword}(説明文(長さ)は{long_description_message} / user_id:{user_id})'
+
+    async def logic_delete_user(self, user_id:int):
+        '''
+        userのステータスを無効にし、論理削除も行います(status:INVALID, system_status:DELETE)
+
+        Parameters
+        ----------
+        user_id: int
+            live-notification用user_id
+
+        Returns
+        ----------
+        message: str
+            変更されたuserのステータスについてのメッセージ
+        '''
+        self.decode()
+        conn = sqlite3.connect(self.FILE_PATH)
+        now = datetime.datetime.now(self.JST)
+        # userの状態チェック
+        status = self._check_user_status_by_user_id(conn, user_id)
+        update_sql = 'UPDATE user SET status = ?, system_status = ?, updated_at = ? WHERE id = ?'
+        message = 'データがありません'
+        if status == None:
+            return message
+        with conn:
+            cur = conn.cursor()
+            if status is not None:
+                param = (self.STATUS_INVALID, self.SYSTEM_STATUS_DELETE, now, user_id)
+                cur.execute(update_sql, param)
+                message = 'ユーザーを削除しました'
+                LOG.info(f'''<重要>userのステータス無効&論理削除 -> {str(user_id)}''')
+        conn.commit()
+        self.read()
+        self.encode()
+        # Herokuの時のみ、チャンネルにファイルを添付する
+        try:
+            await self.set_discord_attachment_file()
+        except discord.errors.Forbidden:
+            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+            LOG.error(message)
+            return message
+        return message
 
     def _check_user_status(self, conn, author_id:int):
         '''
@@ -1621,6 +1927,33 @@ class LiveNotification:
         with conn:
             cur = conn.cursor()
             cur.execute(select_user_sql, (author_id,))
+            fetch = cur.fetchone()
+            status = fetch[0] if fetch is not None else None
+            if status is None:
+                return None
+            else:
+                return status
+
+    def _check_user_status_by_user_id(self, conn, user_id:int):
+        '''
+        userの状態を返却
+
+        Parameters
+        ----------
+        conn: sqlite3.Connection
+            SQLite データベースコネクション
+        user_id: int
+            live-notification用user_id
+
+        Returns
+        ----------
+        status: str
+            live notificationのstatus(存在しない場合はNone)
+        '''
+        select_user_sql = 'SELECT status FROM user WHERE id = ?'
+        with conn:
+            cur = conn.cursor()
+            cur.execute(select_user_sql, (user_id,))
             fetch = cur.fetchone()
             status = fetch[0] if fetch is not None else None
             if status is None:
@@ -1651,7 +1984,74 @@ class LiveNotification:
         else:
             return string[:length] + (syoryaku if string[length:] else '')
 
-    def make_description(self, description_text: str, title: str, is_long: bool=False, length: int=30):
+    async def check_youtube_by_video_id(self, video_id:str):
+        '''
+        YouTubeのvideo_idからchannel_idを取り出す
+
+        Parameters
+        ----------
+        video_id: str
+            YouTubeのvideo_id(またはYouTubeの動画URL)
+
+        Returns
+        ----------
+        channel_id: str
+            YouTubeのchannel_id(UCなんとか)
+        author: str
+            YouTubeのauthor
+        video_id: str
+            YouTubeのvideo_id
+        '''
+        youtube_url,channel_id = None,None
+        author = ''
+        if video_id.startswith(self.YOUTUBE_VIDEO_URL):
+            youtube_url = video_id
+            video_id = video_id.replace(self.YOUTUBE_VIDEO_URL, '')
+        else:
+            youtube_url = self.YOUTUBE_VIDEO_URL + video_id
+
+        # 実際にアクセスしてみて、動画情報を取得
+        async with aiohttp.ClientSession() as session:
+            headers={"accept-language": "ja-JP"}
+            async with session.get(youtube_url, headers=headers) as r:
+                if r.status == 200:
+                    html = await r.text()
+                    # title
+                    match_object = re.search(r'"title":{"simpleText":"(.+?)"}', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        title = match_object.group(1)
+                        LOG.debug(f'title:{title}')
+                    # author
+                    match_object = re.search(r'"viewCount":"\d+?","author":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        author = match_object.group(1)
+                        LOG.debug(f'author:{author}')
+                    # channel_id
+                    match_object = re.search(r'"channelId":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        channel_id = match_object.group(1)
+                        LOG.debug(f'channel_id:{channel_id}')
+        if channel_id is not None:
+            return channel_id,author,video_id
+        else:
+            return None,None,None
+
+    def get_by_result_dict(self, type_name:str, result_dict:dict, channel_title:str='', message_suffix:str='の動画が追加されました！'):
+        video_title = result_dict.get('title')
+        watch_url = result_dict.get('watch_url')
+        if result_dict.get('live_streaming_start_flg') is None:
+            message = f'''{type_name}で{channel_title}さん{message_suffix}\n動画名: {video_title}'''
+        elif result_dict.get('live_streaming_start_flg') is True:
+            # YouTubeで予約配信していたものが配信開始された場合を想定
+            message = f'''{type_name}で{channel_title}さんの配信が開始されました(おそらく)！\n動画名: {video_title}'''
+        elif result_dict.get('live_streaming_start_flg') is False:
+            # YouTubeで予約配信が追加された場合を想定
+            message = f'''{type_name}で{channel_title}さんの予約配信が追加されました！\n動画名: {video_title}'''
+            if result_dict.get('live_streaming_start_datetime') is not None:
+                message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
+        return video_title,watch_url,message
+
+    def make_description(self, description_text: str, title: str, is_long: bool=False, length: int=setting.DESCRIPTION_LENGTH):
         '''
         説明文を生成する(短くする)
 
