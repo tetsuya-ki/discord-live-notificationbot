@@ -9,7 +9,7 @@ from .aes_angou import Aes_angou
 from . import setting, pubsub_subscribe
 from xml.sax.saxutils import unescape
 
-import datetime, discord, sqlite3, os, re, requests
+import datetime, discord, sqlite3, os, re, json
 LOG = getLogger('live-notification-bot')
 
 class LiveNotification:
@@ -1271,21 +1271,16 @@ class LiveNotification:
         type_id: int
             登録したlive notificationのtype_id(ツイキャスのため、「3」)
         '''
-        # json
-        twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
         nickname = channel_id
+        # 最新の動画IDをリクエスト。存在する場合はユーザーページを開き、投稿者名を取得
+        twicas_user_url = f'https://twitcasting.tv/{channel_id}'
         async with aiohttp.ClientSession() as session:
-            async with session.get(twicas_latest_movie_url) as r:
+            async with session.get(twicas_user_url) as r:
                 if r.status == 200:
-                    # 最新の動画IDをリクエスト。存在する場合はユーザーページを開き、投稿者名を取得
-                    twicas_user_url = f'https://twitcasting.tv/{channel_id}'
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(twicas_user_url) as r:
-                            if r.status == 200:
-                                html = await r.text()
-                                match_object = re.search(r'<span class="tw-user-nav-name">(.+?)\s*</span>', html)
-                                if match_object is not None and len(match_object.groups()) >= 1:
-                                    nickname = unescape(match_object.group(1))
+                    html = await r.text()
+                    match_object = re.search(r'<span class="tw-user-nav-name">(.+?)\s*</span>', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        nickname = unescape(match_object.group(1))
                 else:
                     return None,None
         # データ登録
@@ -1303,7 +1298,7 @@ class LiveNotification:
             conn.commit()
             return live_id,self.TYPE_TWITCASTING
 
-    async def get_twitcasting(self, channel_id:str, recent_id:str):
+    async def get_twitcasting(self, channel_id:str, recent_id:str=None):
         '''
         ツイキャスを確認します(放送中の場合、recent_idに登録し、通知対象を返却します)
 
@@ -1326,98 +1321,78 @@ class LiveNotification:
                 recent_id: 最新の動画ID
         '''
         # json
-        twicas_latest_movie_url = f'https://frontendapi.twitcasting.tv/users/{channel_id}/latest-movie'
+        twicas_islive = f'https://twitcasting.tv/userajax.php?c=islive&u={channel_id}'
         async with aiohttp.ClientSession() as session:
-            async with session.get(twicas_latest_movie_url) as r:
+            async with session.get(twicas_islive) as r:
                 if r.status == 200:
-                    twicas_latest_movie_response = await r.json()
-                    twicas_latest_movie = twicas_latest_movie_response['movie']
-                    LOG.debug(channel_id + '-> ' + str(twicas_latest_movie))
-                    # 放送中かチェック
-                    if twicas_latest_movie is None or twicas_latest_movie.get('is_on_live') is None or twicas_latest_movie.get('is_on_live') is False:
-                        return
-                    twicas_latest_movie_id = twicas_latest_movie.get('id')
-                    # すでに通知済かチェック
-                    if recent_id == str(twicas_latest_movie_id):
-                        return
+                    resp = await r.text()
+                    # 放送中かチェック(レスポンスが0以外のときは放送中)
+                    if resp is not None and resp != '0':
+                        twicas_islive_response = json.loads(resp)
+                        twicas_live_movie = twicas_islive_response.get('url')
+                        LOG.debug(channel_id + '-> ' + str(twicas_live_movie))
+                        twicas_latest_movie_id = twicas_live_movie.split('/')[-1]
+                        # すでに通知済かチェック
+                        if recent_id is not None and recent_id == str(twicas_latest_movie_id):
+                            return
 
-                    # recent_idの更新処理
-                    self.decode()
-                    conn = sqlite3.connect(self.FILE_PATH)
-                    with conn:
-                        cur = conn.cursor()
-                        now = datetime.datetime.now(self.JST)
-                        update_recent_id_sql = 'UPDATE live SET recent_id = ?, updated_at = ? WHERE channel_id = ?'
-                        param = (twicas_latest_movie_id, now, channel_id)
-                        cur.execute(update_recent_id_sql, param)
-                        # get id
-                        get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
-                        cur.execute(get_id_sql, (channel_id,))
-                        live_id = cur.fetchone()[0]
-                        LOG.info(f'liveにid:{live_id}({channel_id})のrecent_idを{twicas_latest_movie_id}に更新しました')
-                    conn.commit()
-                    self.read()
-                    self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
+                        # recent_idの更新処理
+                        self.decode()
+                        conn = sqlite3.connect(self.FILE_PATH)
+                        with conn:
+                            cur = conn.cursor()
+                            now = datetime.datetime.now(self.JST)
+                            update_recent_id_sql = 'UPDATE live SET recent_id = ?, updated_at = ? WHERE channel_id = ?'
+                            param = (twicas_latest_movie_id, now, channel_id)
+                            cur.execute(update_recent_id_sql, param)
+                            # get id
+                            get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
+                            cur.execute(get_id_sql, (channel_id,))
+                            live_id = cur.fetchone()[0]
+                            LOG.info(f'liveにid:{live_id}({channel_id})のrecent_idを{twicas_latest_movie_id}に更新しました')
+                        conn.commit()
+                        self.read()
+                        self.encode()
+                        # Herokuの時のみ、チャンネルにファイルを添付する
+                        try:
+                            await self.set_discord_attachment_file()
+                        except discord.errors.Forbidden:
+                            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                            LOG.error(message)
+                            return message
 
-                    twicas_get_token_url = 'https://twitcasting.tv/happytoken.php'
-                    form_data = aiohttp.FormData()
-                    form_data.add_field(name='movie_id', value=twicas_latest_movie_id)
-                    temp_description = ''
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(twicas_get_token_url, data=form_data) as r:
-                            if r.status == 200:
-                                twicas_get_token_response = await r.json()
-                                if twicas_get_token_response is not None and twicas_get_token_response.get('token') is not None:
-                                    # ユーザーページを開き、タイトル、説明文を取得
-                                    twicas_user_url = f'https://twitcasting.tv/{channel_id}'
-                                    async with aiohttp.ClientSession() as session:
-                                        async with session.get(twicas_user_url) as r:
-                                            if r.status == 200:
-                                                html = await r.text()
-                                                match_object_title = re.search(r'<meta property="og:title" content="(.*)"/>', html)
-                                                if match_object_title is not None and len(match_object_title.groups()) >= 1:
-                                                    title = unescape(match_object_title.group(1))
-                                                match_object_description = re.search(r'<meta name="description"\n\s+content="(.*)"/>', html)
-                                                if match_object_description is not None and len(match_object_description.groups()) >= 1:
-                                                    temp_description = unescape(match_object_description.group(1))
-                                                    temp_description = re.sub(title+r'\s*/\s*', '', temp_description)
-                                    token = twicas_get_token_response.get('token')
-                                    params = {'token': token}
-                                    twicas_viewer_url = f'https://frontendapi.twitcasting.tv/movies/{twicas_latest_movie_id}/status/viewer'
-                                    # 配信名など取得
-                                    async with aiohttp.ClientSession() as session:
-                                        async with session.get(twicas_viewer_url, params=params) as r:
-                                            if r.status == 200:
-                                                twicas_viewer_response = await r.json()
-                                                twicas_viewer_movie = twicas_viewer_response.get('movie')
-                                    # 配信開始時刻の取得
-                                    twicas_info_url = f'https://frontendapi.twitcasting.tv/movies/{twicas_latest_movie_id}/info'
-                                    async with aiohttp.ClientSession() as session:
-                                        async with session.get(twicas_info_url, params=params) as r:
-                                            if r.status == 200:
-                                                twicas_info_response = await r.json()
-                                                if twicas_info_response is not None and twicas_info_response.get('started_at') is not None:
-                                                    started_datetime = datetime.datetime.fromtimestamp(twicas_info_response.get('started_at'), self.JST)
-                                                    dt_jst_text = started_datetime.strftime(self.DATETIME_FORMAT)
-                                    # サムネイルの取得(aiohttpだと上手くいかなかったのでrequestsを使用)
-                                    twicas_thumbnail_url = f'https://twitcasting.tv/userajax.php?c=updateindexthumbnail&m={twicas_latest_movie_id}'
-                                    resp = requests.get(twicas_thumbnail_url, allow_redirects=False)
-                                    if resp.headers.get('Location'):
-                                        thumbnail = resp.headers.get('Location')
-                            else:
-                                return
+                        temp_description = ''
+                        # ユーザーページを開き、タイトル、説明文を取得
+                        twicas_user_url = f'https://twitcasting.tv/{channel_id}'
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(twicas_user_url) as r:
+                                if r.status == 200:
+                                    html = await r.text()
+                                    # 配信名, 説明文, 時間, サムネイル
+                                    match_object_title = re.search(r'<meta property="og:title" content="(.*)"/?>', html)
+                                    if match_object_title is not None and len(match_object_title.groups()) >= 1:
+                                        title = unescape(match_object_title.group(1))
+                                    match_object_description = re.search(r'<meta name="description"\n?\s*content="(.*)"/?>', html)
+                                    if match_object_description is not None and len(match_object_description.groups()) >= 1:
+                                        temp_description = unescape(match_object_description.group(1))
+                                        temp_description = re.sub(title+r'\s*/\s*', '', temp_description)
+                                    dt_jst_text = '不明'
+                                    match_object_startedAt = re.search(r'data-started-at="(\d+)"', html)
+                                    if match_object_startedAt is not None and len(match_object_startedAt.groups()) >= 1:
+                                        temp_startedAt = match_object_startedAt.group(1)
+                                        if temp_startedAt is not None and temp_startedAt.isdigit():
+                                            int_startedAt = int(temp_startedAt.removesuffix('000'))
+                                            started_datetime = datetime.datetime.fromtimestamp(int_startedAt, self.JST)
+                                            dt_jst_text = started_datetime.strftime(self.DATETIME_FORMAT)
+                                    match_object_image = re.search(r'<meta property="og:image" content="(.*)"/?>', html)
+                                    if match_object_image is not None and len(match_object_image.groups()) >= 1:
+                                        temp_image = match_object_image.group(1)
+                                else:
+                                    return
+                    else:
+                        return
 
                     # 説明文の組み立て
-                    twicas_viewer_movie_category = twicas_viewer_movie.get('category')
-                    temp_description = temp_description + f'''\nカテゴリ: {twicas_viewer_movie_category.get('name')}''' if twicas_viewer_movie_category is not None and twicas_viewer_movie_category.get('name') is not None else temp_description
-                    temp_description = temp_description + f'''\nピン留め: {twicas_viewer_movie.get('pin_message')}''' if twicas_viewer_movie.get('pin_message') is not None else temp_description
                     description = self._str_truncate(temp_description, self.DESCRIPTION_LENGTH, '(以下省略)')
 
                     twicas_url = f'https://twitcasting.tv/{channel_id}/movie/{twicas_latest_movie_id}'
@@ -1426,8 +1401,8 @@ class LiveNotification:
                                     ,'watch_url': twicas_url
                                     ,'started_at': dt_jst_text
                                     ,'recent_id': str(twicas_latest_movie_id)}
-                    if thumbnail:
-                        twicas_dict['thumbnail'] = thumbnail
+                    if temp_image:
+                        twicas_dict['thumbnail'] = temp_image
 
                     # 通知対象として返却
                     return [twicas_dict]
