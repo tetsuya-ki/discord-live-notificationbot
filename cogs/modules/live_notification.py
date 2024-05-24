@@ -211,14 +211,14 @@ class LiveNotification:
         -------
         なし
         '''
-        # HerokuかRepl.itの時のみ実施
-        if setting.IS_HEROKU or setting.IS_REPLIT:
+        # Herokuの時のみ実施
+        if setting.IS_HEROKU:
             # 環境変数によって、添付ファイルのファイル名を変更する
             file_name = self.aes.ENC_FILE if setting.KEEP_DECRYPTED_FILE else self.DATABASE
             LOG.debug('Heroku mode.start get_discord_attachment_file.')
             # ファイルをチェックし、存在しなければ最初と見做す
             file_path_first_time = join(dirname(__file__), 'files' + os.sep + 'first_time')
-            if (setting.IS_HEROKU and not os.path.exists(file_path_first_time)) or setting.IS_REPLIT:
+            if (setting.IS_HEROKU and not os.path.exists(file_path_first_time)):
                 if setting.IS_HEROKU:
                     with open(file_path_first_time, 'w') as f:
                         now = datetime.datetime.now(self.JST)
@@ -284,8 +284,8 @@ class LiveNotification:
         -------
         なし
         '''
-        # HerokuかRepl.itの時のみ実施
-        if setting.IS_HEROKU or setting.IS_REPLIT:
+        # Herokuの時のみ実施
+        if setting.IS_HEROKU:
             # 環境変数によって、添付ファイルのファイル名を変更する
             file_name = self.aes.ENC_FILE if setting.KEEP_DECRYPTED_FILE else self.DATABASE
             LOG.debug('Heroku mode.start set_discord_attachment_file.')

@@ -154,12 +154,6 @@
   - Herokuの場合、ファイルが削除されるので、discordの添付ファイルを使って保管を試みる(ファイルが削除されていたら、読み込む)
 - 例: IS_HEROKU=FALSE
 
-### IS_REPLIT
-
-- Repl.itで動かすかどうか
-  - Repl.itの場合、sqlite3の保管が怪しいので、discordの添付ファイルを使って保管を試みる
-- 例: IS_REPLIT=TRUE
-
 ### RESTRICT_ATTACHMENT_FILE
 
 - Bot自身が添付したファイルのみ読み込むように制限するかどうか
