@@ -39,8 +39,10 @@ class LiveNotificationCog(commands.Cog):
             await self.printer.start()
         elif self.task_is_excuting:
             self.task_is_excuting = False
-            self.printer.stop()
+            # self.printer.stop()
+            self.printer.cancel()
             # await self.printer.start()
+            self.printer.restart()
 
     def cog_unload(self):
         self.printer.cancel()
@@ -271,7 +273,7 @@ class LiveNotificationCog(commands.Cog):
             LOG.info(f'task is finished.{str(sec.seconds)}[sec].tasks={str(task_count)}.tasks(all)={str(task_count_all)}.')
             self.task_is_excuting = False
         except Exception as e:
-            if notification is not None:
+            if 'notification' in locals() and notification is not None:
                 self.ng_counter[notification['notification_guild']] += 1
                 LOG.error(f'''なにかエラーが発生-> guild: {notification['notification_guild']}, channel: {notification['notification_channel']}''')
             else:

@@ -2,7 +2,6 @@ from sqlite3 import dbapi2
 import aiohttp
 import xml.etree.ElementTree as ET
 from datetime import timedelta, timezone
-from discord.ext import commands
 from os.path import join, dirname
 from logging import getLogger
 from pytube import YouTube

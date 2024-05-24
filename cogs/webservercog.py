@@ -158,6 +158,10 @@ class WebServerCog(commands.Cog):
         return await notification_user.create_dm()
 
     async def check_and_send(self):
+        # day_printerの確認もしておく
+        if not self.day_printer.is_running():
+            LOG.info('days_printerが停止してたので起動')
+            await self.day_printer.start()
         if len(self.noticeList) == 0:
             LOG.info('len:0.\n no loop')
             return
