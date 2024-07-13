@@ -37,6 +37,7 @@ class LiveNotificationCog(commands.Cog):
         if not self.printer.is_running():
             self.task_is_excuting = False
             await self.printer.start()
+            # self.printer.restart()
         elif self.task_is_excuting:
             self.task_is_excuting = False
             # self.printer.stop()
