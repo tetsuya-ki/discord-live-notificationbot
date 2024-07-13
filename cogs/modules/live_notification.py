@@ -1143,23 +1143,27 @@ class LiveNotification:
         '''
         channel_id = channel_id.replace('co', '')
         nico_communities_url = f'https://com.nicovideo.jp/api/v1/communities/{channel_id}/lives.json?limit=1&offset=0'
-        async with aiohttp.ClientSession() as session:
-            async with session.get(nico_communities_url) as r:
-                if r.status == 200:
-                    nico_communities_response = await r.json()
-                    nico_user_id = str(nico_communities_response['data']['lives'][0]['user_id'])
-                    nico_recent_id = str(nico_communities_response['data']['lives'][0]['id'])
-                else:
-                    return None,None
-        # get user
-        nico_user_url = f'https://account.nicovideo.jp/api/public/v1/users/{nico_user_id}.json'
-        async with aiohttp.ClientSession() as session:
-            async with session.get(nico_user_url) as r:
-                if r.status == 200:
-                    nico_user_response = await r.json()
-                    nico_nickname = nico_user_response['data']['nickname']
-                else:
-                    return None,None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(nico_communities_url) as r:
+                    if r.status == 200:
+                        nico_communities_response = await r.json()
+                        nico_user_id = str(nico_communities_response['data']['lives'][0]['user_id'])
+                        nico_recent_id = str(nico_communities_response['data']['lives'][0]['id'])
+                    else:
+                        return None,None
+            # get user
+            nico_user_url = f'https://account.nicovideo.jp/api/public/v1/users/{nico_user_id}.json'
+            async with aiohttp.ClientSession() as session:
+                async with session.get(nico_user_url) as r:
+                    if r.status == 200:
+                        nico_user_response = await r.json()
+                        nico_nickname = nico_user_response['data']['nickname']
+                    else:
+                        return None,None
+        except:
+            LOG.error('ニコニコでなんらかのエラーが発生したので無視します')
+            return None,None
         # データ登録
         with conn:
             cur = conn.cursor()
@@ -1198,60 +1202,64 @@ class LiveNotification:
         '''
         # json
         nico_live_url = f'https://com.nicovideo.jp/api/v1/communities/{channel_id}/lives/onair.json'
-        async with aiohttp.ClientSession() as session:
-            async with session.get(nico_live_url) as r:
-                if r.status == 200:
-                    nico_live_response = await r.json()
-                    nico_live_status = nico_live_response['meta']['status']
-                    LOG.debug(nico_live_status)
-                    # 放送中かチェック
-                    if nico_live_status != 200:
-                        return
-                    nico_live_id = nico_live_response['data']['live']['id']
-                    # すでに通知済かチェック
-                    if recent_id == nico_live_id:
-                        return
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(nico_live_url) as r:
+                    if r.status == 200:
+                        nico_live_response = await r.json()
+                        nico_live_status = nico_live_response['meta']['status']
+                        LOG.debug(nico_live_status)
+                        # 放送中かチェック
+                        if nico_live_status != 200:
+                            return
+                        nico_live_id = nico_live_response['data']['live']['id']
+                        # すでに通知済かチェック
+                        if recent_id == nico_live_id:
+                            return
 
-                    # recent_idの更新処理
-                    self.decode()
-                    conn = sqlite3.connect(self.FILE_PATH)
-                    with conn:
-                        cur = conn.cursor()
-                        now = datetime.datetime.now(self.JST)
-                        update_recent_id_sql = 'UPDATE live SET recent_id = ?, updated_at = ? WHERE channel_id = ?'
-                        param = (nico_live_id, now, channel_id)
-                        cur.execute(update_recent_id_sql, param)
-                        # get id
-                        get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
-                        cur.execute(get_id_sql, (channel_id,))
-                        live_id = cur.fetchone()[0]
-                        LOG.info(f'liveにid:{live_id}({channel_id})のrecent_idを{nico_live_id}に更新しました')
-                    conn.commit()
-                    self.read()
-                    self.encode()
-                    # Herokuの時のみ、チャンネルにファイルを添付する
-                    try:
-                        await self.set_discord_attachment_file()
-                    except discord.errors.Forbidden:
-                        message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
-                        LOG.error(message)
-                        return message
+                        # recent_idの更新処理
+                        self.decode()
+                        conn = sqlite3.connect(self.FILE_PATH)
+                        with conn:
+                            cur = conn.cursor()
+                            now = datetime.datetime.now(self.JST)
+                            update_recent_id_sql = 'UPDATE live SET recent_id = ?, updated_at = ? WHERE channel_id = ?'
+                            param = (nico_live_id, now, channel_id)
+                            cur.execute(update_recent_id_sql, param)
+                            # get id
+                            get_id_sql = 'SELECT id FROM live WHERE channel_id = ?'
+                            cur.execute(get_id_sql, (channel_id,))
+                            live_id = cur.fetchone()[0]
+                            LOG.info(f'liveにid:{live_id}({channel_id})のrecent_idを{nico_live_id}に更新しました')
+                        conn.commit()
+                        self.read()
+                        self.encode()
+                        # Herokuの時のみ、チャンネルにファイルを添付する
+                        try:
+                            await self.set_discord_attachment_file()
+                        except discord.errors.Forbidden:
+                            message = f'＊＊＊{self.saved_dm_guild}へのチャンネル作成に失敗しました＊＊＊'
+                            LOG.error(message)
+                            return message
 
-                    # ニコ生は地味にISOフォーマットではないので変換する(replace('+0900','+09:00'))
-                    nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
-                    dt_started_jst = datetime.datetime.fromisoformat(nico_started_at)
-                    dt_jst_text = dt_started_jst.strftime(self.DATETIME_FORMAT)
+                        # ニコ生は地味にISOフォーマットではないので変換する(replace('+0900','+09:00'))
+                        nico_started_at = nico_live_response['data']['live']['started_at'].replace('+0900','+09:00')
+                        dt_started_jst = datetime.datetime.fromisoformat(nico_started_at)
+                        dt_jst_text = dt_started_jst.strftime(self.DATETIME_FORMAT)
 
-                    # 説明文の文字数削減
-                    description = self._str_truncate(nico_live_response['data']['live']['description'], self.DESCRIPTION_LENGTH, '(以下省略)')
+                        # 説明文の文字数削減
+                        description = self._str_truncate(nico_live_response['data']['live']['description'], self.DESCRIPTION_LENGTH, '(以下省略)')
 
-                    # 通知対象として返却
-                    return [{'title': str(nico_live_response['data']['live']['title'])
-                            ,'description': str(description)
-                            ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
-                            ,'started_at': dt_jst_text
-                            ,'recent_id': nico_live_id
-                            }]
+                        # 通知対象として返却
+                        return [{'title': str(nico_live_response['data']['live']['title'])
+                                ,'description': str(description)
+                                ,'watch_url': str(nico_live_response['data']['live']['watch_url'])
+                                ,'started_at': dt_jst_text
+                                ,'recent_id': nico_live_id
+                                }]
+        except:
+            LOG.error('ニコニコでなんらかのエラーが発生したので無視')
+            return
 
     async def set_twitcasting(self, conn, channel_id:str):
         '''
