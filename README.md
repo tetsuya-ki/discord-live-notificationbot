@@ -1,7 +1,7 @@
 # このBotについて
 
 - Discordで配信通知をするBotです(ニコ生、YouTube、ツイキャスに対応)
-- スラッシュコマンド（[goverfl0w / discord-py-slash-command](https://github.com/goverfl0w/discord-interactions)）が使えるため、コマンドを覚える必要がなく、それぞれのオプションの意味が表示されます
+- スラッシュコマンドが使えるため、コマンドを覚える必要がなく、それぞれのオプションの意味が表示されます
   - 何も設定していない(デフォルトの)場合、配信通知の説明文が30文字以降は省略されます。変更したい場合は[`/live-notification_set-filterword`](#/live-notification_set-filterword)のオプションで長く表示させることができます(チャンネル単位で指定は現在不可)
 
 ## 機能
@@ -167,14 +167,31 @@
 
 ### 前提
 
-- poetryがインストールされていること
+- [Poetry](https://python-poetry.org/)がインストールされていること
+- [ngrok](https://ngrok.com/)がインストールされていること
 - `.env`が作成されていること
 
 ### 動かす
 
 - 以下のコマンドを実行
 
+- `.env`で指定したのが8080の場合(なぜか自分のMacだとこうしないとおかしい感じになる)
+
 ```sh
+# Terminal1で実行
+export PORT=8080
+ngrok http http://localhost:${PORT}
+# https://xxxxxxxxx.ngrok-free.app を .envのCALLBACK_URLに記載
+
+# Terminal2で実行
 poetry install
+export PORT=8080
 poetry run python discord-live-notificationbot.py
 ```
+
+## やめたもの
+
+- [interactions-py/interactions.py](https://github.com/interactions-py/interactions.py)(元:[goverfl0w / discord-py-slash-command](https://github.com/goverfl0w/discord-interactions))を使ったスラッシュコマンド
+  - discord.pyがスラッシュコマンドに対応したため
+- replit対応
+  - 2023,4年あたりから使えなくなったため
