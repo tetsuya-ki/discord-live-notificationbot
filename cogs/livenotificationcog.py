@@ -85,7 +85,7 @@ class LiveNotificationCog(commands.Cog):
                             live['recent_id'] = result_dict_list[0]['recent_id']
                             task_count = task_count + 1
                     message_suffix = 'の動画が追加されました！'
-                elif live['type_id'] == self.liveNotification.TYPE_NICOLIVE:
+                elif live['type_id'] == self.liveNotification.TYPE_NICOLIVE and not setting.EXCLUDE_NICONICO:
                     result_dict_list = await self.liveNotification.get_nicolive(live['channel_id'], live['recent_id'])
                     task_count_all += 1
                     # ループ中に何度も更新しないように、最新の動画を更新しておく

@@ -160,6 +160,12 @@
   - Bot以外(他のBotや人間)が添付したファイルのみを読み込むようになります
 - 例: RESTRICT_ATTACHMENT_FILE=TRUE
 
+### EXCLUDE_NICONICO
+
+- ニコニコ動画を無視するか
+  - 2024年にニコニコ動画が落ちてた時期があったため
+- 例: EXCLUDE_NICONICO=TRUE
+
 ## 動かし方
 
 - wikiに書くつもりです(時期未定)
