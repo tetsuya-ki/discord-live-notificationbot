@@ -930,9 +930,11 @@ class LiveNotification:
                         lengthSeconds = int(lengthSecondsStr) if type(lengthSecondsStr) is str else lengthSecondsStr
                         LOG.debug(f'lengthSeconds:{lengthSecondsStr}')
                     # description
-                    match_object = re.search(r'"shortDescription":"(.+?)",', html)
+                    match_object = re.search(r'"shortDescription":"(.*)",', html)
+                    description = "(この動画には説明がありません)"
                     if match_object is not None and len(match_object.groups()) >= 1:
-                        description = self._str_truncate(match_object.group(1), self.DESCRIPTION_LENGTH, '(以下省略)')
+                        if len(match_object.group(1)) > 1:
+                            description = self._str_truncate(match_object.group(1), self.DESCRIPTION_LENGTH, '(以下省略)')
                         LOG.debug(f'description:{description}')
                     # publishDate
                     match_object = re.search(r'"publishDate":"(.+?)",', html)
