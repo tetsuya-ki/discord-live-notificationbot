@@ -5,23 +5,24 @@ description = "test"
 authors = ["tetsuya-k <64536338+tetsuya-ki@users.noreply.github.com>"]
 
 [tool.poetry.dependencies]
-python = "^3.8"
-aiohttp = "^3.7.4"
-async-timeout = "3.0.1"
+python = "^3.10"
+aiohttp = "^3.7"
+async-timeout = "^3.0.0"
 attrs = "^20.3.0"
 chardet = "3.0.4"
-"discord.py" = "^2.3.2"
 idna = "2.10"
 python-dateutil = "^2.8.1"
 python-dotenv = "^0.15.0"
 six = "^1.15.0"
 multidict = "4.7.6"
-yarl = "1.5.1"
+yarl = "^1.5.0"
 toml = "^0.10.2"
 pycryptodome = "^3.10.1"
 pytube = "^11.0.1"
 requests = "^2.27.1"
 defusedxml = "^0.7.1"
+discord-py = "^2.2"
+certifi = "^2024.8.30"
 
 [tool.poetry.dev-dependencies]
 
