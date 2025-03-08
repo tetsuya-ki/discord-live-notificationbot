@@ -112,7 +112,6 @@ class LiveNotificationCog(commands.Cog):
 
                                 # 説明文短縮処理
                                 description = self.liveNotification.make_description(result_dict.get('description'), live['title'], notification['long_description'] == 'True')
-                                description = description.replace('\\n','\n')
                                 LOG.info(description)
 
                                 # フィルター処理
@@ -127,19 +126,8 @@ class LiveNotificationCog(commands.Cog):
                                         LOG.info(f'''notification:{notification['id']}, nitification_user_id:{notification['user_id']}はフィルタで切り捨てられました。\n{watch_url}''')
                                         continue
 
-                                embed = discord.Embed(
-                                title=video_title,
-                                color=0x000000,
-                                description=description,
-                                url=watch_url
-                                )
-                                embed.set_author(name=self.bot.user,
-                                                url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
-                                                icon_url=self.bot.user.display_avatar
-                                                )
-                                embed.add_field(name='配信日時',value=result_dict.get('started_at'))
-                                if result_dict.get('thumbnail') is not None and str(result_dict.get('thumbnail')).startswith('http'):
-                                    embed.set_thumbnail(url=result_dict.get('thumbnail'))
+                                # embedを作成
+                                embed = self.liveNotification.make_embed_from_dict(description, result_dict)
 
                                 # メンション処理
                                 mention = notification['mention'] if notification['mention'] is not None else ''
@@ -517,23 +505,12 @@ class LiveNotificationCog(commands.Cog):
             result_dict_list = await self.liveNotification.get_youtube(channel_id, video_id, datetime.datetime.now(self.JST))
             if result_dict_list is not None and len(result_dict_list) > 0:
                 for result_dict in result_dict_list:
-                    video_title,watch_url,message = self.liveNotification.get_by_result_dict('YouTube', result_dict, auhor_name)
+                    _,_,message = self.liveNotification.get_by_result_dict('YouTube', result_dict, auhor_name)
                     description = self.liveNotification.make_description(result_dict.get('description'), auhor_name)
+                    LOG.info(description)
 
-                    embed = discord.Embed(
-                    title=video_title,
-                    color=0x000000,
-                    description=description,
-                    url=watch_url
-                    )
-                    embed.set_author(name=self.bot.user,
-                                    url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
-                                    icon_url=self.bot.user.display_avatar
-                                    )
-                    if result_dict.get('started_at') is not None:
-                        embed.add_field(name='配信日時',value=result_dict.get('started_at'))
-                    if result_dict.get('thumbnail') is not None and str(result_dict.get('thumbnail')).startswith('http'):
-                        embed.set_thumbnail(url=result_dict.get('thumbnail'))
+                    # embedを作成
+                    embed = self.liveNotification.make_embed_from_dict(description, result_dict)
                     await interaction.response.send_message(message, embed=embed, ephemeral=hidden)
             else:
                 await interaction.response.send_message('何もありませんでした', ephemeral=hidden)

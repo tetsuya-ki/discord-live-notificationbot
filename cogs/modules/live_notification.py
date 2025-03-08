@@ -1,10 +1,9 @@
-from sqlite3 import dbapi2
 import aiohttp
 import xml.etree.ElementTree as ET
 from datetime import timedelta, timezone
 from os.path import join, dirname
 from logging import getLogger
-from pytube import YouTube
+from pytube import YouTube # v1だけ使う
 from .aes_angou import Aes_angou
 from . import setting, pubsub_subscribe
 from xml.sax.saxutils import unescape
@@ -23,9 +22,11 @@ class LiveNotification:
     YOUTUBE = 'YouTube'
     NICOLIVE = 'ニコ生'
     TWITCASTING = 'ツイキャス'
-    YOUTUBE_URL = 'https://www.youtube.com/feeds/videos.xml?channel_id='
-    YOUTUBE_VIDEO_URL = 'https://www.youtube.com/watch?v='
-    YOUTUBE_URL_FOR_PUBSUB = 'https://www.youtube.com/xml/feeds/videos.xml?channel_id='
+    YOUTUBE_DOMAIN = 'https://www.youtube.com'
+    YOUTUBE_URL = f'{YOUTUBE_DOMAIN}/feeds/videos.xml?channel_id='
+    YOUTUBE_VIDEO_URL = f'{YOUTUBE_DOMAIN}/watch?v='
+    YOUTUBE_URL_FOR_PUBSUB = f'{YOUTUBE_DOMAIN}/xml/feeds/videos.xml?channel_id='
+    YOUTUBE_LIVE_URL = f'{YOUTUBE_DOMAIN}/live/'
     TYPE_YOUTUBE = 1
     TYPE_NICOLIVE = 2
     TYPE_TWITCASTING = 3
@@ -642,7 +643,8 @@ class LiveNotification:
             # pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
             youtube_recent_length = 0
             try:
-                youtube_recent_length = YouTube(youtube_recent_url).length
+                #youtube_recent_length = YouTube(youtube_recent_url).length
+                youtube_recent_length = await self.get_youtube_length_mysef(youtube_recent_url)
             except:
                 pass
 
@@ -843,6 +845,7 @@ class LiveNotification:
                 started_at: 動画の開始日時
                 thumbnail: 動画のサムネイル画像
         '''
+        LOG.info(f'process start->video_id:{video_id}.')
         updated_at = None
         if updated is not None:
             updated_at = updated.strftime(self.DATETIME_FORMAT)
@@ -871,19 +874,21 @@ class LiveNotification:
 
     async def get_youtube_and_write(self, channel_id:str, video_id:str, updated_at_by_page:str=''):
         # 動画が追加されたか、前回確認時に動画の長さが0だった場合のみ、pytubeでYouTube Objectを作成し、動画の長さを取得(長さが0なら未配信とみなす)
-        youtube = None
+        LOG.info(f'process start->video_id:{video_id}.')
         youtube_url = self.get_youtube_url(video_id)
 
         # 初期化
         liveStartTime,title,lengthSeconds,publish_datetime_str,live_streaming_start_datetime,live_streaming_start_jst,live_streaming_end_datetime = None,None,None,None,None,None,None
         description,author = '',''
-        isLiveNow = False
+        isLiveNow,isMembersOnly = False,False
 
         # 実際にアクセスしてみて、動画情報を取得
+        LOG.debug(f'aiohttp.ClientSession_start:{video_id}.')
         async with aiohttp.ClientSession() as session:
             headers={"accept-language": "ja-JP"}
             async with session.get(youtube_url, headers=headers) as r:
                 if r.status == 200:
+                    LOG.debug(f'aiohttp.ClientSession_end:{video_id}.')
                     html_raw = await r.text()
                     html = html_raw.replace('\u3000','  ').replace('\u200d',' ').replace('\u200D',' ').replace('\\u0026','&')
                     if html_raw != html:
@@ -930,12 +935,12 @@ class LiveNotification:
                         lengthSeconds = int(lengthSecondsStr) if type(lengthSecondsStr) is str else lengthSecondsStr
                         LOG.debug(f'lengthSeconds:{lengthSecondsStr}')
                     # description
-                    match_object = re.search(r'"shortDescription":"(.*)",', html)
+                    match_object = re.search(r'"shortDescription":"(.*?)",', html)
                     description = "(この動画には説明がありません)"
                     if match_object is not None and len(match_object.groups()) >= 1:
                         if len(match_object.group(1)) > 1:
                             description = self._str_truncate(match_object.group(1), self.DESCRIPTION_LENGTH, '(以下省略)')
-                        LOG.debug(f'description:{description}')
+                        LOG.info(f'description:{description}')
                     # publishDate
                     match_object = re.search(r'"publishDate":"(.+?)",', html)
                     if match_object is not None and len(match_object.groups()) >= 1:
@@ -957,7 +962,11 @@ class LiveNotification:
                         live_streaming_end = datetime.datetime.strptime(striemingEndTime, self.DATETIME_FORMAT_TZ)
                         live_streaming_end_jst = live_streaming_end.astimezone(self.JST)
                         live_streaming_end_datetime = live_streaming_end_jst.strftime(self.DATETIME_FORMAT)
-
+                    # メンバー限定かチェック("iconType":"SPONSORSHIP_STAR")
+                    match_object = re.search(r'"iconType":"SPONSORSHIP_STAR"', html)
+                    if match_object is not None:
+                        isMembersOnly = True
+        LOG.debug(f'htmlを見て色々処理するところ完了:{video_id}.')
         # publishDateが古いものは対象外にする
         now = datetime.datetime.now(self.JST)
         days_1_ago = now - timedelta(days=1)
@@ -989,25 +998,29 @@ class LiveNotification:
             update_flg = True
         # 以下は不要かもしれないが、念の為チェック
         elif youtube_recent_length is not None and (youtube_recent_length == 0 or youtube_recent_length == '0'):
-            try:
-                LOG.info('youtube_check............')
-                youtube = YouTube(youtube_url)
-                youtube_recent_length = youtube.length
-                if youtube_recent_length == 0:
-                    youtube.streaming_data # 未配信の場合、Errorが発生
-                    youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
-                    live_streaming_start_flg = True
-                    LOG.info('youtube_check_1')
-                    update_flg = True
-                else:
-                    update_flg = True
-                    LOG.info('youtube_check_2')
-            except:
-                LOG.info(f'youtube.streaming_data({video_id}) is None.')
-                live_streaming_start_flg = False
+            # TODO:後で消す
+            LOG.debug(f'念のためチェックのところに来ている:{video_id}.')
+            pass
+            # try:
+            #     LOG.info('youtube_check............')
+            #     youtube = YouTube(youtube_url)
+            #     youtube_recent_length = youtube.length
+            #     if youtube_recent_length == 0:
+            #         youtube.streaming_data # 未配信の場合、Errorが発生
+            #         youtube_recent_length = 1 # Errorが発生しない場合、1扱いとする
+            #         live_streaming_start_flg = True
+            #         LOG.info('youtube_check_1')
+            #         update_flg = True
+            #     else:
+            #         update_flg = True
+            #         LOG.info('youtube_check_2')
+            # except:
+            #     LOG.info(f'youtube.streaming_data({video_id}) is None.')
+            #     live_streaming_start_flg = False
 
         NOTIF = None
         try:
+            LOG.debug(f'DB更新処理開始:{video_id}.')
             # recent_idの更新処理
             self.decode()
             conn = sqlite3.connect(self.FILE_PATH)
@@ -1120,6 +1133,8 @@ class LiveNotification:
             ,'channel_id': channel_id
             ,'author': author
             ,'updated_at': updated_at_by_page
+            ,'lengthSeconds': lengthSeconds
+            ,'isMembersOnly': isMembersOnly
             }]
 
     def get_youtube_url(self, video_id):
@@ -1991,6 +2006,9 @@ class LiveNotification:
         if video_id.startswith(self.YOUTUBE_VIDEO_URL):
             youtube_url = video_id
             video_id = video_id.replace(self.YOUTUBE_VIDEO_URL, '')
+        elif video_id.startswith(self.YOUTUBE_LIVE_URL):
+            youtube_url = video_id.replace(self.YOUTUBE_LIVE_URL, self.YOUTUBE_VIDEO_URL)
+            video_id = video_id.replace(self.YOUTUBE_LIVE_URL, '')
         else:
             youtube_url = self.YOUTUBE_VIDEO_URL + video_id
 
@@ -2020,22 +2038,66 @@ class LiveNotification:
         else:
             return None,None,None
 
+    async def get_youtube_length_mysef(self, youtube_url):
+        # 初期化
+        lengthSeconds=0
+
+        # 実際にアクセスしてみて、動画情報を取得
+        async with aiohttp.ClientSession() as session:
+            headers={"accept-language": "ja-JP"}
+            async with session.get(youtube_url, headers=headers) as r:
+                if r.status == 200:
+                    html = await r.text()
+                    # lengthSeconds
+                    match_object = re.search(r'"},"lengthSeconds":"(.+?)",', html)
+                    if match_object is not None and len(match_object.groups()) >= 1:
+                        lengthSecondsStr = match_object.group(1)
+                        lengthSeconds = int(lengthSecondsStr) if type(lengthSecondsStr) is str else lengthSecondsStr
+                        LOG.debug(f'lengthSeconds:{lengthSecondsStr}')
+        return lengthSeconds
+
     def get_by_result_dict(self, type_name:str, result_dict:dict, channel_title:str='', message_suffix:str='の動画が追加されました！'):
         video_title = result_dict.get('title')
         watch_url = result_dict.get('watch_url')
+
+        # プレミア公開フラグを作成
+        seconds = result_dict.get('lengthSeconds')
+        premia_flg = True
+        if seconds is None or type(seconds) is str or str(seconds) == '0':
+            premia_flg = False
+
+        # メンバー限定コンテンツフラグを作成
+        is_members_only = result_dict.get('isMembersOnly')
+        member_flg = False
+        if is_members_only is not None and is_members_only:
+            member_flg = True
+
         if result_dict.get('live_streaming_start_flg') is None:
             message = f'''{type_name}で{channel_title}さん{message_suffix}\n動画名: {video_title}'''
         elif result_dict.get('live_streaming_start_flg') is True:
             # YouTubeで予約配信していたものが配信開始された場合を想定
-            message = f'''{type_name}で{channel_title}さんの配信が開始されました(おそらく)！\n動画名: {video_title}'''
+            if premia_flg is False:
+                message = f'''{type_name}で{channel_title}さんの配信が開始されました(おそらく)！\n動画名: {video_title}'''
+            # YouTubeで予約していたプレミア公開が開始された場合を想定
+            else:
+                message = f'''YouTubeで{channel_title}さんのプレミア公開が開始されました(おそらく)！\n動画名: {video_title}'''
         elif result_dict.get('live_streaming_start_flg') is False:
             # YouTubeで予約配信が追加された場合を想定
-            message = f'''{type_name}で{channel_title}さんの予約配信が追加されました！\n動画名: {video_title}'''
+            if premia_flg is False:
+                message = f'''{type_name}で{channel_title}さんの予約配信が追加されました！\n動画名: {video_title}'''
+            else:
+                message = f'''YouTubeで{channel_title}さんのプレミア公開が追加されました！\n動画名: {video_title}'''
             if result_dict.get('live_streaming_start_datetime') is not None:
                 message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
+        else:
+            # こない予定だが念の為
+            message = f'''{type_name}で{channel_title}さん{message_suffix}\n動画名: {video_title}'''
+        # メンバー限定コンテンツ注意書き
+        if member_flg:
+            message += '(メンバー限定コンテンツ)'
         return video_title,watch_url,message
 
-    def make_description(self, description_text: str, title: str, is_long: bool=False, length: int=setting.DESCRIPTION_LENGTH):
+    def make_description(self, description_text: str, title: str, is_long: bool=False, length: int=setting.DESCRIPTION_LENGTH) -> str:
         '''
         説明文を生成する(短くする)
 
@@ -2055,6 +2117,77 @@ class LiveNotification:
         string: str
             説明文
         '''
+        if description_text:
+            description_text = description_text.replace('\\n','\n').replace('\u3000', '  ')
         if not is_long:
             return f'''{self._str_truncate(description_text, length)} by {title}'''
         return f'''{description_text} by {title}'''
+
+    def make_timestr(self, sec:int) -> str:
+        '''
+        時間を記載
+
+        Parameters
+        ----------
+        sec: int
+            秒数
+
+        Returns
+        ----------
+        string: str
+            時間(hh:mi:ss)
+        '''
+        if sec is None or sec == 0:
+            return None
+        m, s = divmod(sec, 60)
+        h, m = divmod(m, 60)
+        return f'''{h}:{m:02}:{s:02}'''
+
+
+    def make_embed_from_dict(self, description:str, result_dict:dict) -> discord.Embed:
+        '''
+        result_dictからembedを作成
+
+        Parameters
+        ----------
+        description: str
+            説明文
+        result_dict: dict
+            様々な情報が入ったdict
+
+        Returns
+        ----------
+        embed: discord.Embed
+            embed
+        '''
+        if result_dict is None:
+            return None
+        video_title = result_dict.get('title', '(名前なし)')
+        if video_title == '':
+            video_title = '(名前なし)'
+        embed = discord.Embed(
+            title=video_title,
+            color=0x000000,
+            description=description,
+            url=result_dict.get('watch_url'))
+        embed.set_author(name=self.bot.user,
+                        url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
+                        icon_url=self.bot.user.display_avatar
+                        )
+        started_at = ''
+        if result_dict.get('started_at'):
+            started_at = result_dict.get('started_at')
+            embed.add_field(name='配信日時',value=started_at)
+        updated_at = result_dict.get('updated_at')
+        sec = result_dict.get('lengthSeconds', 'None')
+        if updated_at:
+            embed.add_field(name='更新日時',value=updated_at)
+        if result_dict.get('thumbnail') is not None and str(result_dict.get('thumbnail')).startswith('http'):
+            embed.set_thumbnail(url=result_dict.get('thumbnail'))
+        if sec is not None and type(sec) is int and sec > 0:
+            movie_time = self.make_timestr(sec)
+            if movie_time:
+                embed.add_field(name='動画の長さ',value=movie_time)
+        if result_dict.get('isMembersOnly'):
+            embed.add_field(name='備考',value='メンバー限定コンテンツ')
+        return embed

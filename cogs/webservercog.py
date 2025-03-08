@@ -34,8 +34,9 @@ class WebServerCog(commands.Cog):
         self.task_is_excuting = False
         self.noticeList = []
         self.web_server.start()
-        # Trueの場合、最初はsubscribeしない
-        self.first = False
+        # FALSEの場合、最初はsubscribeしない
+        self.first = setting.PUBSUB_SUBSCRIBE_EXECUTE_FIRST
+        self.first_execute = True
 
         # ref.https://stackoverflow.com/questions/48693069/running-flask-a-discord-bot-in-the-same-application
         @routes.get('/handler')
@@ -114,6 +115,8 @@ class WebServerCog(commands.Cog):
                 return
 
         self.webserver_port = setting.PORT
+        LOG.info(self.first)
+        LOG.info(self.webserver_port)
         app.add_routes(routes)
 
     # 読み込まれた時の処理
@@ -121,20 +124,26 @@ class WebServerCog(commands.Cog):
     async def on_ready(self):
         await asyncio.sleep(15)
         await self.liveNotification.prepare()  # db準備
-        if not self.day_printer.is_running() and not self.first:
+        # 動いておらず、起動フラグがTrue(または指定なし)の場合、PubSub登録を実行
+        if not self.day_printer.is_running() and self.first and self.first_execute:
             await self.day_printer.start()
-            pass
+            LOG.info("day_printer start")
+            self.first_execute = False # 次からはon_readyでは実行されない
         else:
-            self.first = False
+            LOG.info("day_printer not start")
 
     def cog_unload(self):
         self.printer.cancel()
 
     # TODO:1日1回PubSub登録(&3日?すぎた未済リザーブの整理&180日?すぎたリザーブの整理)
-    @tasks.loop(hours=24.0)
+    @tasks.loop(hours=48.0)
     async def day_printer(self):
         now_d = datetime.datetime.now(self.JST)
         LOG.info(f'day printer is kicked.({now_d})')
+        # 起動フラグがFalseの場合、最初はsubscribeしない(次回から起動)
+        if not self.first:
+            self.first = True
+            return
 
         # V2の場合、liveがYouTubeの分だけサブスクライブしていく
         if setting.LIVE_NOTIFICATION_V2:
@@ -170,25 +179,12 @@ class WebServerCog(commands.Cog):
             target_list = copy.deepcopy(self.noticeList)
             self.noticeList = []
             for result_dict in target_list:
-                video_title = result_dict.get('title')
-                watch_url = result_dict.get('watch_url')
                 author = result_dict.get('author')
                 if author is None or author == '':
                     author = '(不明)'
-                if video_title is None or author == '':
-                    video_title = '(名前なし)'
-                updated_at = result_dict.get('updated_at')
 
-                if result_dict.get('live_streaming_start_flg') is True:
-                    # YouTubeで予約配信していたものが配信開始された場合を想定
-                    message = f'''YouTubeで{author}さんの配信が開始されました(おそらく)！\n動画名: {video_title}'''
-                elif result_dict.get('live_streaming_start_flg') is False:
-                    # YouTubeで予約配信が追加された場合を想定
-                    message = f'''YouTubeで{author}さんの予約配信が追加されました！\n動画名: {video_title}'''
-                    if result_dict.get('live_streaming_start_datetime') is not None:
-                        message += f'''\n配信予定日時は**{result_dict.get('live_streaming_start_datetime')}**です！'''
-                else: # result_dict.get('live_streaming_start_flg') is None:
-                    message = f'''YouTubeで{author}さんの動画が追加されました！\n動画名: {video_title}'''
+                # いろいろ取得
+                video_title,watch_url,message = self.liveNotification.get_by_result_dict('YouTube', result_dict, author)
 
                 LOG.info(f'{message}\n{watch_url}')
                 LOG.info(result_dict)
@@ -203,7 +199,6 @@ class WebServerCog(commands.Cog):
                                 and channel_id == live['channel_id']:
                                 # 説明文短縮処理 & 改行のエスケープをやめる
                                 description = self.liveNotification.make_description(result_dict.get('description'), author, notification['long_description'] == 'True')
-                                description = description.replace('\\n','\n').replace('\u3000', '  ')
                                 LOG.info(description)
 
                                 # フィルター処理
@@ -219,24 +214,9 @@ class WebServerCog(commands.Cog):
                                         LOG.info(f'''notification:{notification['id']}, notification_user_id:{notification['user_id']}はフィルタで切り捨てられました。\n{watch_url}''')
                                         continue
 
-                                embed = discord.Embed(
-                                    title=video_title,
-                                    color=0x000000,
-                                    description=description,
-                                    url=watch_url)
-                                embed.set_author(name=self.bot.user,
-                                                url='https://github.com/tetsuya-ki/discord-live-notificationbot/',
-                                                icon_url=self.bot.user.display_avatar
-                                                )
-                                started_at = ''
-                                if result_dict.get('started_at') is not None:
-                                    started_at = result_dict.get('started_at')
-                                    embed.add_field(name='配信日時',value=started_at)
-                                LOG.info(f'''notification:{notification['id']}: started_at:{started_at}''')
-                                if updated_at:
-                                    embed.add_field(name='更新日時',value=updated_at)
-                                if result_dict.get('thumbnail') is not None and str(result_dict.get('thumbnail')).startswith('http'):
-                                    embed.set_thumbnail(url=result_dict.get('thumbnail'))
+                                # embedを作成
+                                embed = self.liveNotification.make_embed_from_dict(description, result_dict)
+                                LOG.info(f'''notification:{notification['id']}: started_at:{result_dict.get('started_at','None')}''')
 
                                 # メンション処理
                                 if notification['mention']:

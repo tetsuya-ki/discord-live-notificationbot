@@ -3,12 +3,15 @@ from os.path import join, dirname
 from dotenv import load_dotenv
 from logging import DEBUG, INFO, WARNING, ERROR
 
-def if_env(string:str):
+def if_env(string:str, none_is_false:bool=True):
     '''
-    strをTrue／Falseに変換(NoneのときはFalse)
+    strをTrue／Falseに変換(NoneのときはデフォルトはFalse(none_is_falseをFalseとすればTrueになる))
     '''
     if string is None:
-        return False
+        if none_is_false:
+            return False
+        else:
+            return True
     elif string.upper() == 'TRUE':
         return True
     else:
@@ -81,3 +84,4 @@ DESCRIPTION_LENGTH = num_env(os.environ.get('DESCRIPTION_LENGTH', '150'))
 APPLICATION_ID = os.environ.get('APPLICATION_ID2')
 ENABLE_SLASH_COMMAND_GUILD_ID = split_guild_env(os.environ.get('ENABLE_SLASH_COMMAND_GUILD_ID'))
 EXCLUDE_NICONICO = if_env(os.environ.get('EXCLUDE_NICONICO'))
+PUBSUB_SUBSCRIBE_EXECUTE_FIRST = if_env(os.environ.get('PUBSUB_SUBSCRIBE_EXECUTE_FIRST'), False)

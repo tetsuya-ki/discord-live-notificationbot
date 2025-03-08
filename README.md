@@ -166,6 +166,12 @@
   - 2024年にニコニコ動画が落ちてた時期があったため
 - 例: EXCLUDE_NICONICO=TRUE
 
+### PUBSUB_SUBSCRIBE_EXECUTE_FIRST
+
+- PubSub登録を最初にするか(未指定の場合はTrue扱い)
+  - Falseにした場合、次回登録する(頻繁に登録したくない場合にFalseとする)
+- 例: PUBSUB_SUBSCRIBE_EXECUTE_FIRST=False
+
 ## 動かし方
 
 - wikiに書くつもりです(時期未定)
@@ -175,6 +181,7 @@
 
 - [Poetry](https://python-poetry.org/)がインストールされていること
 - [ngrok](https://ngrok.com/)がインストールされていること
+  - 簡単のためngrokとしていますが[Google PubSubHubbub Hub](https://pubsubhubbub.appspot.com/)に応答を返すことが可能ならなんでもOK
 - `.env`が作成されていること
 
 ### 動かす
