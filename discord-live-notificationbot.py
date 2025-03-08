@@ -74,6 +74,9 @@ class DiscordLiveNotificationBot(commands.Bot):
 async def main():
     # Botの起動
     async with bot:
+        LOG.info(setting.APPLICATION_ID)
+        LOG.info(setting.CALLBACK_URL)
+        LOG.info(setting.PORT)
         await bot.start(setting.DISCORD_TOKEN)
         LOG.info('We have logged in as {0}'.format(bot.user))
 
