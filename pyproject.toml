@@ -22,7 +22,7 @@ toml = "^0.10.2"
 pycryptodome = "^3.10.1"
 discord-py-interactions = "^3.0.2"
 pytube = "^11.0.1"
-requests = "^2.27.1"
+requests = "^2.32.4"
 
 [tool.poetry.dev-dependencies]
 
