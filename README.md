@@ -1,7 +1,7 @@
 # このBotについて
 
 - Discordで配信通知をするBotです(ニコ生、YouTube、ツイキャスに対応)
-- スラッシュコマンド（[goverfl0w / discord-py-slash-command](https://github.com/goverfl0w/discord-interactions)）が使えるため、コマンドを覚える必要がなく、それぞれのオプションの意味が表示されます
+- スラッシュコマンドが使えるため、コマンドを覚える必要がなく、それぞれのオプションの意味が表示されます
   - 何も設定していない(デフォルトの)場合、配信通知の説明文が30文字以降は省略されます。変更したい場合は[`/live-notification_set-filterword`](#/live-notification_set-filterword)のオプションで長く表示させることができます(チャンネル単位で指定は現在不可)
 - 変更履歴は[tags](https://github.com/tetsuya-ki/discord-live-notificationbot/tags)か[CHANGELOG.md](/CHANGELOG.md)を確認ください
 
@@ -160,17 +160,23 @@
   - Herokuの場合、ファイルが削除されるので、discordの添付ファイルを使って保管を試みる(ファイルが削除されていたら、読み込む)
 - 例: IS_HEROKU=FALSE
 
-### IS_REPLIT
-
-- Repl.itで動かすかどうか
-  - Repl.itの場合、sqlite3の保管が怪しいので、discordの添付ファイルを使って保管を試みる
-- 例: IS_REPLIT=TRUE
-
 ### RESTRICT_ATTACHMENT_FILE
 
 - Bot自身が添付したファイルのみ読み込むように制限するかどうか
   - Bot以外(他のBotや人間)が添付したファイルのみを読み込むようになります
 - 例: RESTRICT_ATTACHMENT_FILE=TRUE
+
+### EXCLUDE_NICONICO
+
+- ニコニコ動画を無視するか
+  - 2024年にニコニコ動画が落ちてた時期があったため
+- 例: EXCLUDE_NICONICO=TRUE
+
+### PUBSUB_SUBSCRIBE_EXECUTE_FIRST
+
+- PubSub登録を最初にするか(未指定の場合はTrue扱い)
+  - Falseにした場合、次回登録する(頻繁に登録したくない場合にFalseとする)
+- 例: PUBSUB_SUBSCRIBE_EXECUTE_FIRST=False
 
 ## 動かし方
 
@@ -179,14 +185,32 @@
 
 ### 前提
 
-- poetryがインストールされていること
+- [Poetry](https://python-poetry.org/)がインストールされていること
+- [ngrok](https://ngrok.com/)がインストールされていること
+  - 簡単のためngrokとしていますが[Google PubSubHubbub Hub](https://pubsubhubbub.appspot.com/)に応答を返すことが可能ならなんでもOK
 - `.env`が作成されていること
 
 ### 動かす
 
 - 以下のコマンドを実行
 
+- `.env`で指定したのが8080の場合(なぜか自分のMacだとこうしないとおかしい感じになる)
+
 ```sh
+# Terminal1で実行
+export PORT=8080
+ngrok http http://localhost:${PORT}
+# https://xxxxxxxxx.ngrok-free.app を .envのCALLBACK_URLに記載
+
+# Terminal2で実行
 poetry install
+export PORT=8080
 poetry run python discord-live-notificationbot.py
 ```
+
+## やめたもの
+
+- [interactions-py/interactions.py](https://github.com/interactions-py/interactions.py)(元:[goverfl0w / discord-py-slash-command](https://github.com/goverfl0w/discord-interactions))を使ったスラッシュコマンド
+  - discord.pyがスラッシュコマンドに対応したため
+- replit対応
+  - 2023,4年あたりから使えなくなったため
