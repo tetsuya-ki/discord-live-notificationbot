@@ -370,8 +370,10 @@ class LiveNotificationCog(commands.Cog):
     @app_commands.describe(
         disp_all_flag='配信通知をすべて表示するかどうか(デフォルトはギルドの配信通知のみ)')
     @app_commands.describe(
+        filter='配信通知リストを検索')
+    @app_commands.describe(
         reply_is_hidden='Botの実行結果を全員に見せるどうか')
-    async def live_notification_list(self, interaction: discord.Interaction, disp_all_flag:Literal['すべて表示', 'コマンドを実行するギルドへ登録した配信通知のみ表示'] = 'コマンドを実行するギルドへ登録した配信通知のみ表示', reply_is_hidden: Literal['自分のみ', '全員に見せる'] = SHOW_ME):
+    async def live_notification_list(self, interaction: discord.Interaction, disp_all_flag:Literal['すべて表示', 'コマンドを実行するギルドへ登録した配信通知のみ表示'] = 'コマンドを実行するギルドへ登録した配信通知のみ表示', filter:str='', reply_is_hidden: Literal['自分のみ', '全員に見せる'] = SHOW_ME):
         LOG.info('live-notificationを確認するぜ！')
         await self.check_printer_is_running()
         hidden = True if reply_is_hidden == self.SHOW_ME else False
@@ -401,9 +403,13 @@ class LiveNotificationCog(commands.Cog):
                                 通知先: {result_dict.get('channel')}
                                 更新日時: {result_dict.get('updated_at')}
                                 '''
-                embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+                # filterが登録されている場合、message_rowに存在するもののみ表示する
+                if filter:
+                    if filter in message_row:
+                        embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
+                else:
+                    embed.add_field(name=f'''notification_id: {result_dict['notification_id']}''', value=message_row, inline=False)
             await interaction.response.send_message('あなたの登録した配信通知はコチラです', embed=embed, ephemeral=hidden)
-
 
     @app_commands.command(
         name='live-notification_toggle',
